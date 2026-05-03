@@ -17,22 +17,23 @@ export const processImage = async (file, options = { maxSizeMB: 20, format: 'web
     const isOriginal = maxSizeMB === null || maxSizeMB <= 0;
     
     const compressionOptions = {
-      maxSizeMB: isOriginal ? 100 : maxSizeMB, // 100MB is effectively no compression for most web images
-      maxWidthOrHeight: 16384, // High res support
+      maxSizeMB: isOriginal ? 10000 : maxSizeMB,
+      maxWidthOrHeight: 16384,
       useWebWorker: true,
-      initialQuality: isOriginal ? 1.0 : 0.9, // Start with high quality for size targets
-      fileType: `image/${format === 'jpg' ? 'jpeg' : format}`
+      initialQuality: isOriginal ? 1.0 : 0.9,
+      fileType: `image/${format === 'jpg' ? 'jpeg' : format}`,
+      preserveExif: true,
     };
 
     const compressedFile = await imageCompression(sourceBlob, compressionOptions);
-    
-    // Create preview URL
+
     const preview = URL.createObjectURL(compressedFile);
-    
+
     return {
       success: true,
       file: compressedFile,
       preview,
+      format,
       originalSize: file.size,
       compressedSize: compressedFile.size,
       ratio: ((1 - compressedFile.size / file.size) * 100).toFixed(1)
