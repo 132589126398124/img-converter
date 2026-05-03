@@ -57,14 +57,19 @@ function App() {
   };
 
   const removeImage = (id) => {
-    setImages(prev => prev.filter(img => img.id !== id));
+    setImages(prev => {
+      const target = prev.find(img => img.id === id);
+      if (target?.result?.preview) URL.revokeObjectURL(target.result.preview);
+      return prev.filter(img => img.id !== id);
+    });
   };
 
   const downloadImage = (img) => {
     if (!img.result) return;
     const link = document.createElement('a');
     link.href = img.result.preview;
-    link.download = `lumina_${img.name.split('.')[0]}.${format}`;
+    const baseName = img.name.replace(/\.[^.]+$/, '');
+    link.download = `lumina_${baseName}.${img.result.format}`;
     link.click();
   };
 
@@ -80,28 +85,29 @@ function App() {
 
     setIsZipping(true);
     const zip = new JSZip();
-    
+
     for (const img of completedImages) {
-      const response = await fetch(img.result.preview);
-      const blob = await response.blob();
-      const fileName = `lumina_${img.name.split('.')[0]}.${format}`;
-      zip.file(fileName, blob);
+      const baseName = img.name.replace(/\.[^.]+$/, '');
+      const fileName = `lumina_${baseName}.${img.result.format}`;
+      zip.file(fileName, img.result.file);
     }
 
     const content = await zip.generateAsync({ type: 'blob' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(content);
-    
-    // 포맷명을 대문자로 변환하여 파일명 구성
-    const formatName = format.toUpperCase();
-    link.download = `${formatName}_converted_${getTimestamp()}.zip`;
+    link.download = `lumina_converted_${getTimestamp()}.zip`;
     
     link.click();
     setIsZipping(false);
   };
 
   const clearAll = () => {
-    setImages([]);
+    setImages(prev => {
+      prev.forEach(img => {
+        if (img?.result?.preview) URL.revokeObjectURL(img.result.preview);
+      });
+      return [];
+    });
   };
 
   return (
@@ -248,7 +254,7 @@ function App() {
                 <div className="card-body">
                   <div className="card-title">
                     <h4>{img.name}</h4>
-                    {img.status === 'pending' && (
+                    {(img.status === 'pending' || img.status === 'error') && (
                       <button className="item-remove-btn" onClick={() => removeImage(img.id)}>
                         <X size={14} />
                       </button>
@@ -256,13 +262,21 @@ function App() {
                   </div>
                   <div className="card-footer">
                     <div className="card-info">
-                      {img.status === 'done' ? (
-                        <div className="success-tag">
-                          <CheckCircle2 size={12} />
-                          <span>{img.result.ratio}% 절감 ({(img.result.compressedSize / 1024 / 1024).toFixed(2)} MB)</span>
-                        </div>
-                      ) : img.status === 'working' ? (
+                      {img.status === 'done' ? (() => {
+                        const ratio = parseFloat(img.result.ratio);
+                        return (
+                          <div className="success-tag">
+                            <CheckCircle2 size={12} />
+                            <span>
+                              {ratio >= 0 ? `${ratio}% 절감` : `${Math.abs(ratio)}% 증가`}
+                              {' '}({(img.result.compressedSize / 1024 / 1024).toFixed(2)} MB)
+                            </span>
+                          </div>
+                        );
+                      })() : img.status === 'working' ? (
                         <span className="working-txt">변환 중...</span>
+                      ) : img.status === 'error' ? (
+                        <span className="error-txt">변환 실패 — {img.error}</span>
                       ) : (
                         <span className="size-txt">대기 중 • {(img.file.size / 1024 / 1024).toFixed(2)} MB</span>
                       )}
