@@ -97,10 +97,21 @@ export const processImageForInstagram = async (file) => {
     do {
       const ptr = mj.encode(rgb, imageData.width, imageData.height, 3, {
         quality,
-        autoSubsample: false,
-        chromaSubsample: 1,
+        baseline: false,
+        arithmetic: false,
         progressive: true,
         optimizeCoding: true,
+        smoothing: 0,
+        colorSpace: 3,
+        quantTable: 3,
+        trellisMultipass: false,
+        trellisOptZero: false,
+        trellisOptTable: false,
+        trellisLoops: 1,
+        autoSubsample: false,
+        chromaSubsample: 1,
+        separateChromaQuality: false,
+        chromaQuality: quality,
       });
       encoded = new Uint8Array(mj.getImage(ptr));
       mj.freeImage(ptr);
