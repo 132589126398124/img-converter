@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, Image as ImageIcon, Download, CheckCircle2, Loader2, X, Settings2, Trash2, Play, Package } from 'lucide-react';
+import { Upload, Image as ImageIcon, Download, CheckCircle2, Loader2, X, Settings2, Trash2, Play, Package, AlertTriangle } from 'lucide-react';
 import JSZip from 'jszip';
-import { processImage } from './utils/imageProcessor';
+import { processImage, processImageForInstagram } from './utils/imageProcessor';
 import './App.css';
 
 const SIZE_OPTIONS = [
@@ -20,6 +20,7 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
+  const [instagramMode, setInstagramMode] = useState(false);
 
   const handleFiles = useCallback((files) => {
     const newImages = Array.from(files).map(file => ({
@@ -39,7 +40,9 @@ function App() {
     setIsProcessingAll(true);
     for (const img of pendingImages) {
       setImages(prev => prev.map(i => i.id === img.id ? { ...i, status: 'working' } : i));
-      const result = await processImage(img.file, { maxSizeMB: targetSize, format });
+      const result = instagramMode
+        ? await processImageForInstagram(img.file)
+        : await processImage(img.file, { maxSizeMB: targetSize, format });
       setImages(prev => prev.map(i => i.id === img.id ? { 
         ...i, 
         status: result.success ? 'done' : 'error',
@@ -159,36 +162,76 @@ function App() {
             <Settings2 size={18} />
             <span>변환 설정</span>
           </div>
-          <div className="settings-grid">
-            <div className="setting-box">
-              <label>목표 포맷</label>
-              <div className="select-wrapper">
-                <select value={format} onChange={(e) => setFormat(e.target.value)}>
-                  <option value="webp">WebP</option>
-                  <option value="jpg">JPEG</option>
-                  <option value="png">PNG</option>
-                </select>
-              </div>
-            </div>
-            <div className="setting-box">
-              <label>목표 용량 <span>{SIZE_OPTIONS.find(o => o.value === targetSize)?.label}</span></label>
-              <div className="size-selector">
-                {SIZE_OPTIONS.map(option => (
-                  <button 
-                    key={option.value}
-                    className={`size-btn ${targetSize === option.value ? 'active' : ''}`}
-                    onClick={() => setTargetSize(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+
+          <div className="setting-box" style={{ marginBottom: '1.5rem' }}>
+            <label>변환 모드</label>
+            <div className="mode-selector">
+              <button
+                className={`mode-btn ${!instagramMode ? 'active' : ''}`}
+                onClick={() => setInstagramMode(false)}
+              >
+                기본
+              </button>
+              <button
+                className={`mode-btn ${instagramMode ? 'active' : ''}`}
+                onClick={() => setInstagramMode(true)}
+              >
+                인스타그램
+              </button>
             </div>
           </div>
-          
+
+          {!instagramMode ? (
+            <div className="settings-grid">
+              <div className="setting-box">
+                <label>목표 포맷</label>
+                <div className="select-wrapper">
+                  <select value={format} onChange={(e) => setFormat(e.target.value)}>
+                    <option value="webp">WebP</option>
+                    <option value="jpg">JPEG</option>
+                    <option value="png">PNG</option>
+                  </select>
+                </div>
+              </div>
+              <div className="setting-box">
+                <label>목표 용량 <span>{SIZE_OPTIONS.find(o => o.value === targetSize)?.label}</span></label>
+                <div className="size-selector">
+                  {SIZE_OPTIONS.map(option => (
+                    <button
+                      key={option.value}
+                      className={`size-btn ${targetSize === option.value ? 'active' : ''}`}
+                      onClick={() => setTargetSize(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="instagram-info">
+              <div className="instagram-info-row">
+                <span className="instagram-info-label">포맷</span>
+                <span>JPEG (자동)</span>
+              </div>
+              <div className="instagram-info-row">
+                <span className="instagram-info-label">최대 해상도</span>
+                <span>장축 4096px</span>
+              </div>
+              <div className="instagram-info-row">
+                <span className="instagram-info-label">최대 용량</span>
+                <span>10MB</span>
+              </div>
+              <div className="instagram-info-row">
+                <span className="instagram-info-label">지원 화면비</span>
+                <span>1.91:1 (가로) ~ 4:5 (세로)</span>
+              </div>
+            </div>
+          )}
+
           {images.some(img => img.status === 'pending') && (
-            <button 
-              className="convert-main-btn" 
+            <button
+              className="convert-main-btn"
               onClick={startConversion}
               disabled={isProcessingAll}
             >
@@ -287,6 +330,12 @@ function App() {
                       </button>
                     )}
                   </div>
+                  {img.result?.warning && (
+                    <div className="warning-tag">
+                      <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>{img.result.warning}</span>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             ))}

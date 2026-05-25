@@ -1,5 +1,106 @@
 import UTIF from 'utif';
 import imageCompression from 'browser-image-compression';
+import mozjpegEncode from '@wasm-codecs/mozjpeg';
+
+const INSTAGRAM_MAX_LANDSCAPE = 1.91;
+const INSTAGRAM_MIN_PORTRAIT = 1 / 1.35;
+
+async function getImageDimensions(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('이미지 크기를 읽을 수 없습니다'));
+    };
+    img.src = url;
+  });
+}
+
+async function resizeToCanvas(blob, maxDimension) {
+  const bitmap = await createImageBitmap(blob);
+  const { width, height } = bitmap;
+
+  const scale = Math.max(width, height) > maxDimension
+    ? maxDimension / Math.max(width, height)
+    : 1;
+  const tw = Math.round(width * scale);
+  const th = Math.round(height * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = tw;
+  canvas.height = th;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, tw, th);
+  ctx.drawImage(bitmap, 0, 0, tw, th);
+  bitmap.close();
+
+  return ctx.getImageData(0, 0, tw, th);
+}
+
+export const processImageForInstagram = async (file) => {
+  try {
+    let sourceBlob = file;
+
+    if (file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
+      sourceBlob = await convertTiffToBlob(file);
+    }
+
+    const { width, height } = await getImageDimensions(sourceBlob);
+    const aspectRatio = width / height;
+
+    let warning = null;
+    if (aspectRatio > INSTAGRAM_MAX_LANDSCAPE) {
+      warning = `화면비 ${aspectRatio.toFixed(2)}:1 — 인스타 지원 범위(최대 1.91:1) 초과. 업로드 시 좌우가 크롭됩니다.`;
+    } else if (aspectRatio < INSTAGRAM_MIN_PORTRAIT) {
+      warning = `화면비 1:${(1 / aspectRatio).toFixed(2)} — 인스타 지원 범위(최대 4:5) 초과. 업로드 시 상하가 크롭됩니다.`;
+    }
+
+    const imageData = await resizeToCanvas(sourceBlob, 4096);
+
+    const maxBytes = 10 * 1024 * 1024;
+    let quality = 92;
+    let encodedBuffer;
+
+    do {
+      encodedBuffer = await mozjpegEncode(
+        imageData.data,
+        { width: imageData.width, height: imageData.height, channels: 4 },
+        {
+          quality,
+          autoSubsample: false,
+          chromaSubsample: 0, // 4:4:4
+          progressive: true,
+          optimizeCoding: true,
+        }
+      );
+      if (encodedBuffer.byteLength <= maxBytes || quality <= 60) break;
+      quality -= 3;
+    } while (true);
+
+    const compressedFile = new Blob([encodedBuffer], { type: 'image/jpeg' });
+    const preview = URL.createObjectURL(compressedFile);
+
+    return {
+      success: true,
+      file: compressedFile,
+      preview,
+      format: 'jpg',
+      originalSize: file.size,
+      compressedSize: compressedFile.size,
+      ratio: ((1 - compressedFile.size / file.size) * 100).toFixed(1),
+      warning,
+    };
+  } catch (error) {
+    console.error('Instagram processing failed:', error);
+    return { success: false, error: error.message };
+  }
+};
 
 export const processImage = async (file, options = { maxSizeMB: 20, format: 'webp' }) => {
   const { maxSizeMB, format } = options;
