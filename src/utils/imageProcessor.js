@@ -1,7 +1,6 @@
 import UTIF from 'utif';
 import imageCompression from 'browser-image-compression';
-import mozjpegFactory from '@wasm-codecs/mozjpeg/lib/mozjpeg.js';
-import mozjpegWasmUrl from '@wasm-codecs/mozjpeg/lib/mozjpeg.wasm?url';
+import jpegJs from 'jpeg-js';
 
 const INSTAGRAM_MAX_LANDSCAPE = 1.91;
 const INSTAGRAM_MIN_PORTRAIT = 1 / 1.35;
@@ -20,29 +19,6 @@ async function getImageDimensions(blob) {
     };
     img.src = url;
   });
-}
-
-let _mozjpeg = null;
-
-async function getMozjpeg() {
-  if (_mozjpeg) return _mozjpeg;
-  await new Promise((resolve) => {
-    _mozjpeg = mozjpegFactory({
-      locateFile: (path) => path.endsWith('.wasm') ? mozjpegWasmUrl : path,
-      onRuntimeInitialized: resolve,
-    });
-  });
-  return _mozjpeg;
-}
-
-function rgbaToRgb(data, w, h) {
-  const rgb = new Uint8Array(w * h * 3);
-  for (let i = 0; i < w * h; i++) {
-    rgb[i * 3]     = data[i * 4];
-    rgb[i * 3 + 1] = data[i * 4 + 1];
-    rgb[i * 3 + 2] = data[i * 4 + 2];
-  }
-  return rgb;
 }
 
 async function resizeToCanvas(blob, maxDimension) {
@@ -87,34 +63,16 @@ export const processImageForInstagram = async (file) => {
 
     const imageData = await resizeToCanvas(sourceBlob, 4096);
 
-    const mj = await getMozjpeg();
-    const rgb = rgbaToRgb(imageData.data, imageData.width, imageData.height);
-
     const maxBytes = 10 * 1024 * 1024;
     let quality = 92;
     let encoded;
 
     do {
-      const ptr = mj.encode(rgb, imageData.width, imageData.height, 3, {
-        quality,
-        baseline: false,
-        arithmetic: false,
-        progressive: true,
-        optimizeCoding: true,
-        smoothing: 0,
-        colorSpace: 3,
-        quantTable: 3,
-        trellisMultipass: false,
-        trellisOptZero: false,
-        trellisOptTable: false,
-        trellisLoops: 1,
-        autoSubsample: false,
-        chromaSubsample: 1,
-        separateChromaQuality: false,
-        chromaQuality: quality,
-      });
-      encoded = new Uint8Array(mj.getImage(ptr));
-      mj.freeImage(ptr);
+      const result = jpegJs.encode(
+        { data: new Uint8Array(imageData.data.buffer), width: imageData.width, height: imageData.height },
+        quality
+      );
+      encoded = result.data;
       if (encoded.byteLength <= maxBytes || quality <= 60) break;
       quality -= 3;
     } while (true);
