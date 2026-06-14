@@ -101,10 +101,31 @@ export const processImageForInstagram = async (file) => {
 
 export const processImage = async (file, options = { maxSizeMB: 20, format: 'webp' }) => {
   const { maxSizeMB, format } = options;
+  const isOriginal = maxSizeMB === null || maxSizeMB <= 0;
   
   try {
-    let sourceBlob = file;
     const nameLower = file.name.toLowerCase();
+    const isJpg = nameLower.endsWith('.jpg') || nameLower.endsWith('.jpeg') || file.type === 'image/jpeg';
+    const isPng = nameLower.endsWith('.png') || file.type === 'image/png';
+    const isWebp = nameLower.endsWith('.webp') || file.type === 'image/webp';
+    
+    const isSameFormat = (isJpg && format === 'jpg') || (isPng && format === 'png') || (isWebp && format === 'webp');
+    
+    // [Optimization] If "Original" is selected and the target format is identical to the source format,
+    // bypass the canvas pipeline. This guarantees 100% quality, color profile, and EXIF preservation.
+    if (isOriginal && isSameFormat) {
+      return {
+        success: true,
+        file: file,
+        preview: URL.createObjectURL(file),
+        format: format,
+        originalSize: file.size,
+        compressedSize: file.size,
+        ratio: "0.0"
+      };
+    }
+
+    let sourceBlob = file;
     
     // 1. Convert special formats (TIFF, DNG, HEIC/HEIF) to standard Blob
     if (nameLower.endsWith('.tif') || nameLower.endsWith('.tiff') || nameLower.endsWith('.dng')) {
@@ -114,8 +135,6 @@ export const processImage = async (file, options = { maxSizeMB: 20, format: 'web
     }
 
     // 2. Process / Compress
-    // If maxSizeMB is null or negative, we treat it as "Original" (no compression)
-    const isOriginal = maxSizeMB === null || maxSizeMB <= 0;
     
     const compressionOptions = {
       maxSizeMB: isOriginal ? 10000 : maxSizeMB,
