@@ -149,63 +149,112 @@ const convertTiffOrDngToBlob = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
+      const buffer = e.target.result;
+      const nameLower = file.name.toLowerCase();
+      
+      // 1. For DNG files, prioritize carving the embedded JPEG first
+      // This is extremely fast, uses minimal memory, and avoids loading RAW bayer data into browser memory
+      if (nameLower.endsWith('.dng')) {
+        const carvedBlob = extractLargestJpegFromDng(buffer);
+        if (carvedBlob) {
+          resolve(carvedBlob);
+          return;
+        }
+      }
+
+      // 2. Try decoding using UTIF
       try {
-        const buffer = e.target.result;
         const ifds = UTIF.decode(buffer);
-        if (!ifds || ifds.length === 0) {
-          throw new Error('TIFF/DNG image directory not found.');
-        }
+        if (ifds && ifds.length > 0) {
+          // Sort IFDs by resolution to find the largest image/preview first
+          const sortedIfds = [...ifds].map((ifd, index) => ({ ifd, index }))
+            .sort((a, b) => {
+              const sizeA = (a.ifd.width || 0) * (a.ifd.height || 0);
+              const sizeB = (b.ifd.width || 0) * (b.ifd.height || 0);
+              return sizeB - sizeA;
+            });
 
-        // Sort IFDs by resolution to find the largest image/preview first
-        const sortedIfds = [...ifds].map((ifd, index) => ({ ifd, index }))
-          .sort((a, b) => {
-            const sizeA = (a.ifd.width || 0) * (a.ifd.height || 0);
-            const sizeB = (b.ifd.width || 0) * (b.ifd.height || 0);
-            return sizeB - sizeA;
-          });
+          let rgba = null;
+          let selectedIfd = null;
 
-        let rgba = null;
-        let selectedIfd = null;
-
-        for (const item of sortedIfds) {
-          try {
-            UTIF.decodeImage(buffer, item.ifd);
-            rgba = UTIF.toRGBA8(item.ifd);
-            if (rgba && rgba.length > 0) {
-              selectedIfd = item.ifd;
-              break;
+          for (const item of sortedIfds) {
+            try {
+              UTIF.decodeImage(buffer, item.ifd);
+              rgba = UTIF.toRGBA8(item.ifd);
+              if (rgba && rgba.length > 0) {
+                selectedIfd = item.ifd;
+                break;
+              }
+            } catch (err) {
+              console.warn(`Failed to decode IFD ${item.index}:`, err);
             }
-          } catch (err) {
-            console.warn(`Failed to decode IFD ${item.index}:`, err);
+          }
+
+          if (selectedIfd && rgba) {
+            const canvas = document.createElement('canvas');
+            canvas.width = selectedIfd.width;
+            canvas.height = selectedIfd.height;
+            const ctx = canvas.getContext('2d');
+            const imgData = ctx.createImageData(canvas.width, canvas.height);
+            imgData.data.set(rgba);
+            ctx.putImageData(imgData, 0, 0);
+
+            canvas.toBlob((blob) => {
+              if (blob) {
+                resolve(blob);
+              } else {
+                // If canvas conversion failed, try carving as a fallback
+                const carvedBlob = extractLargestJpegFromDng(buffer);
+                if (carvedBlob) resolve(carvedBlob);
+                else reject(new Error('Canvas to Blob conversion failed'));
+              }
+            }, 'image/png');
+            return;
           }
         }
-
-        if (!selectedIfd || !rgba) {
-          throw new Error('디코딩 가능한 이미지 데이터를 찾을 수 없습니다.');
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = selectedIfd.width;
-        canvas.height = selectedIfd.height;
-        const ctx = canvas.getContext('2d');
-        const imgData = ctx.createImageData(canvas.width, canvas.height);
-        imgData.data.set(rgba);
-        ctx.putImageData(imgData, 0, 0);
-
-        canvas.toBlob((blob) => {
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error('Canvas to Blob conversion failed'));
-          }
-        }, 'image/png');
       } catch (err) {
-        reject(err);
+        console.warn('UTIF decoding failed:', err);
+      }
+
+      // 3. Fallback: try JPEG carving for DNG or TIFF if UTIF parsing threw an error or found no valid directories
+      const carvedBlob = extractLargestJpegFromDng(buffer);
+      if (carvedBlob) {
+        resolve(carvedBlob);
+      } else {
+        reject(new Error('이미지를 디코딩할 수 없거나 유효한 미리보기 이미지를 찾을 수 없습니다.'));
       }
     };
     reader.onerror = () => reject(reader.error);
     reader.readAsArrayBuffer(file);
   });
+};
+
+const extractLargestJpegFromDng = (arrayBuffer) => {
+  const bytes = new Uint8Array(arrayBuffer);
+  let largestJpeg = null;
+  let maxLen = 0;
+
+  for (let i = 0; i < bytes.length - 2; i++) {
+    // Check for SOI marker (0xFF, 0xD8, 0xFF)
+    if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8 && bytes[i + 2] === 0xFF) {
+      // Find the corresponding EOI marker (0xFF, 0xD9)
+      for (let j = i + 2; j < bytes.length - 1; j++) {
+        if (bytes[j] === 0xFF && bytes[j + 1] === 0xD9) {
+          const len = j + 2 - i;
+          if (len > maxLen) {
+            maxLen = len;
+            largestJpeg = bytes.subarray(i, i + len);
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  if (largestJpeg) {
+    return new Blob([largestJpeg], { type: 'image/jpeg' });
+  }
+  return null;
 };
 
 const convertHeicToBlob = async (file) => {
