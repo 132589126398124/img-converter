@@ -46,9 +46,12 @@ async function resizeToCanvas(blob, maxDimension) {
 export const processImageForInstagram = async (file) => {
   try {
     let sourceBlob = file;
+    const nameLower = file.name.toLowerCase();
 
-    if (file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
-      sourceBlob = await convertTiffToBlob(file);
+    if (nameLower.endsWith('.tif') || nameLower.endsWith('.tiff') || nameLower.endsWith('.dng')) {
+      sourceBlob = await convertTiffOrDngToBlob(file);
+    } else if (nameLower.endsWith('.heic') || nameLower.endsWith('.heif')) {
+      sourceBlob = await convertHeicToBlob(file);
     }
 
     const { width, height } = await getImageDimensions(sourceBlob);
@@ -101,10 +104,13 @@ export const processImage = async (file, options = { maxSizeMB: 20, format: 'web
   
   try {
     let sourceBlob = file;
+    const nameLower = file.name.toLowerCase();
     
-    // 1. Handle TIFF specifically
-    if (file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
-      sourceBlob = await convertTiffToBlob(file);
+    // 1. Convert special formats (TIFF, DNG, HEIC/HEIF) to standard Blob
+    if (nameLower.endsWith('.tif') || nameLower.endsWith('.tiff') || nameLower.endsWith('.dng')) {
+      sourceBlob = await convertTiffOrDngToBlob(file);
+    } else if (nameLower.endsWith('.heic') || nameLower.endsWith('.heif')) {
+      sourceBlob = await convertHeicToBlob(file);
     }
 
     // 2. Process / Compress
@@ -139,31 +145,75 @@ export const processImage = async (file, options = { maxSizeMB: 20, format: 'web
   }
 };
 
-const convertTiffToBlob = (file) => {
+const convertTiffOrDngToBlob = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const ifds = UTIF.decode(e.target.result);
-        UTIF.decodeImage(e.target.result, ifds[0]);
-        const rgba = UTIF.toRGBA8(ifds[0]);
-        
+        const buffer = e.target.result;
+        const ifds = UTIF.decode(buffer);
+        if (!ifds || ifds.length === 0) {
+          throw new Error('TIFF/DNG image directory not found.');
+        }
+
+        // Sort IFDs by resolution to find the largest image/preview first
+        const sortedIfds = [...ifds].map((ifd, index) => ({ ifd, index }))
+          .sort((a, b) => {
+            const sizeA = (a.ifd.width || 0) * (a.ifd.height || 0);
+            const sizeB = (b.ifd.width || 0) * (b.ifd.height || 0);
+            return sizeB - sizeA;
+          });
+
+        let rgba = null;
+        let selectedIfd = null;
+
+        for (const item of sortedIfds) {
+          try {
+            UTIF.decodeImage(buffer, item.ifd);
+            rgba = UTIF.toRGBA8(item.ifd);
+            if (rgba && rgba.length > 0) {
+              selectedIfd = item.ifd;
+              break;
+            }
+          } catch (err) {
+            console.warn(`Failed to decode IFD ${item.index}:`, err);
+          }
+        }
+
+        if (!selectedIfd || !rgba) {
+          throw new Error('디코딩 가능한 이미지 데이터를 찾을 수 없습니다.');
+        }
+
         const canvas = document.createElement('canvas');
-        canvas.width = ifds[0].width;
-        canvas.height = ifds[0].height;
+        canvas.width = selectedIfd.width;
+        canvas.height = selectedIfd.height;
         const ctx = canvas.getContext('2d');
         const imgData = ctx.createImageData(canvas.width, canvas.height);
         imgData.data.set(rgba);
         ctx.putImageData(imgData, 0, 0);
-        
+
         canvas.toBlob((blob) => {
-          resolve(blob);
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Canvas to Blob conversion failed'));
+          }
         }, 'image/png');
       } catch (err) {
         reject(err);
       }
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(reader.error);
     reader.readAsArrayBuffer(file);
   });
+};
+
+const convertHeicToBlob = async (file) => {
+  const heic2anyModule = await import('heic2any');
+  const heic2any = heic2anyModule.default || heic2anyModule;
+  const result = await heic2any({
+    blob: file,
+    toType: 'image/png'
+  });
+  return Array.isArray(result) ? result[0] : result;
 };

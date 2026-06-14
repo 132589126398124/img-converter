@@ -15,7 +15,7 @@ const SIZE_OPTIONS = [
 
 function App() {
   const [images, setImages] = useState([]);
-  const [targetSize, setTargetSize] = useState(20);
+  const [targetSize, setTargetSize] = useState(0);
   const [format, setFormat] = useState('webp');
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
@@ -67,12 +67,24 @@ function App() {
     });
   };
 
+  const getFormattedTimestamp = () => {
+    const now = new Date();
+    const pad = (n) => n.toString().padStart(2, '0');
+    const yy = String(now.getFullYear()).slice(-2);
+    const mm = pad(now.getMonth() + 1);
+    const dd = pad(now.getDate());
+    const hh = pad(now.getHours());
+    const min = pad(now.getMinutes());
+    const sec = pad(now.getSeconds());
+    return `${yy}${mm}${dd}${hh}${min}${sec}`;
+  };
+
   const downloadImage = (img) => {
     if (!img.result) return;
     const link = document.createElement('a');
     link.href = img.result.preview;
     const baseName = img.name.replace(/\.[^.]+$/, '');
-    link.download = `lumina_${baseName}.${img.result.format}`;
+    link.download = `${getFormattedTimestamp()}_${baseName}.${img.result.format}`;
     link.click();
   };
 
@@ -88,17 +100,18 @@ function App() {
 
     setIsZipping(true);
     const zip = new JSZip();
+    const currentTimestamp = getFormattedTimestamp();
 
     for (const img of completedImages) {
       const baseName = img.name.replace(/\.[^.]+$/, '');
-      const fileName = `lumina_${baseName}.${img.result.format}`;
+      const fileName = `${currentTimestamp}_${baseName}.${img.result.format}`;
       zip.file(fileName, img.result.file);
     }
 
     const content = await zip.generateAsync({ type: 'blob' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(content);
-    link.download = `lumina_converted_${getTimestamp()}.zip`;
+    link.download = `converted_${currentTimestamp}.zip`;
     
     link.click();
     setIsZipping(false);
@@ -145,7 +158,7 @@ function App() {
             id="fileInput" 
             multiple 
             hidden 
-            accept="image/*,.tif,.tiff"
+            accept="image/*,.tif,.tiff,.heic,.heif,.dng"
             onChange={(e) => handleFiles(e.target.files)}
           />
           <div className="dropzone-content">
@@ -153,7 +166,7 @@ function App() {
               <Upload size={32} />
             </div>
             <h2>사진을 여기에 드래그하세요</h2>
-            <p>JPG, PNG, WebP, TIFF 지원</p>
+            <p>JPG, PNG, WebP, TIFF, HEIC, DNG 지원</p>
           </div>
         </div>
 
