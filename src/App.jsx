@@ -106,27 +106,42 @@ function App() {
   };
 
   const handleFiles = useCallback((files) => {
-    const newImages = Array.from(files)
-      .filter(file => {
-        const name = file.name.toLowerCase();
-        return file.type.startsWith('image/') ||
-          name.endsWith('.tif') || name.endsWith('.tiff') ||
-          name.endsWith('.dng') || name.endsWith('.heic') ||
-          name.endsWith('.heif') || name.endsWith('.webp') ||
-          name.endsWith('.avif');
-      })
-      .map(file => ({
-        id: Math.random().toString(36).substring(2, 11),
-        file,
-        name: file.name,
-        status: 'pending',
-        result: null,
-        error: null,
-      }));
+    if (!files || files.length === 0) return;
+    const incomingFiles = Array.from(files).filter(file => {
+      const name = file.name.toLowerCase();
+      return file.type.startsWith('image/') ||
+        name.endsWith('.tif') || name.endsWith('.tiff') ||
+        name.endsWith('.dng') || name.endsWith('.heic') ||
+        name.endsWith('.heif') || name.endsWith('.webp') ||
+        name.endsWith('.avif');
+    });
 
-    if (newImages.length > 0) {
-      setImages(prev => [...newImages, ...prev]);
-    }
+    if (incomingFiles.length === 0) return;
+
+    setImages(prev => {
+      // Deduplicate: avoid adding identical files if they already exist in the list
+      const existingKeys = new Set(
+        prev.map(img => `${img.name}_${img.file.size}_${img.file.lastModified}`)
+      );
+
+      const uniqueNewImages = [];
+      for (const file of incomingFiles) {
+        const key = `${file.name}_${file.size}_${file.lastModified}`;
+        if (!existingKeys.has(key)) {
+          existingKeys.add(key);
+          uniqueNewImages.push({
+            id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
+            file,
+            name: file.name,
+            status: 'pending',
+            result: null,
+            error: null,
+          });
+        }
+      }
+
+      return [...uniqueNewImages, ...prev];
+    });
   }, []);
 
   // Window-level Drag and Drop to prevent accidental navigation
@@ -178,7 +193,7 @@ function App() {
   const onDropZoneDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-    handleFiles(e.dataTransfer.files);
+    // Files are captured globally by the window drop listener to prevent 2x duplicate additions
   };
 
   const effectiveLongEdge = targetLongEdge === -1 ? (parseInt(customLongEdge, 10) || 0) : targetLongEdge;
@@ -394,7 +409,10 @@ function App() {
             multiple
             hidden
             accept="image/*,.tif,.tiff,.heic,.heif,.dng,.avif"
-            onChange={(e) => handleFiles(e.target.files)}
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              e.target.value = '';
+            }}
           />
           <div className="dropzone-content">
             <div className="icon-wrapper">
