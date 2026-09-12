@@ -1,16 +1,74 @@
-# React + Vite
+# Lumina Flow 2.0 🌟
+> **초고화질 무손실 이미지 변환 & 비율 유지 장축 리사이즈 스튜디오**
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Lumina Flow는 사진 작가, 디자이너, 크리에이터를 위한 웹 기반 고성능 이미지 변환 및 리사이징 도구입니다. 브라우저 내에서 100% 로컬로 동작하여 서버 전송 없이 안전하고 빠르며, 최신 렌더링 파이프라인과 EXIF 메타데이터 보존 엔진을 탑재하여 화질 및 데이터 손실을 최소화합니다.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🚀 주요 기능 (Key Features)
 
-## React Compiler
+### 1. 사진 비율 유지 장축(Long Edge) 리사이즈
+- **비율 100% 자동 유지**: 가로/세로 중 긴 변을 자동으로 감지하여 지정한 장축 길이에 맞춰 원본 화면비를 완벽하게 보존합니다.
+- **다양한 해상도 프리셋**:
+  - `원본 유지 (Original)`
+  - `4096px (Ultra / Instagram Max)`
+  - `3840px (4K UHD)`
+  - `2560px (QHD / 2K)`
+  - `2048px (Web / SNS 고화질)`
+  - `1920px (Full HD)`
+  - `1080px (모바일 최적화)`
+  - `직접 입력 (Custom px)`
+- **작은 사진 확대 방지**: 원본 사진이 지정한 장축 크기보다 작은 경우 불필요하게 업스케일링하여 화질이 흐려지는 것을 원천 차단합니다.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 2. 화질 및 데이터 손실 최소화 파이프라인
+- **Pica Lanczos3 스튜디오급 리사이징**: 단순 브라우저 `drawImage`의 계단 현상 및 모아레 왜곡을 방지하고, Lanczos3 윈도우 싱크 필터와 미세 언샵 마스크로 섬세한 디테일과 선명도를 유지합니다.
+- **EXIF 메타데이터 보존 엔진**: 카메라 모델, 렌즈 정보, 촬영 일시, 셔터스피드, 조리개, ISO 등 소중한 촬영 정보를 추출하여 변환된 JPEG 및 WebP 파일에 안전하게 주입합니다. (정방향 1:1 Orientation 자동 정규화로 회전 버그 방지)
+- **투명 배경(Alpha 채널) 스마트 매트**: 투명 PNG/WebP를 JPEG로 변환할 때 투명 영역이 검은색으로 깨지는 문제를 해결하여 깔끔한 화이트 배경으로 합성합니다.
+- **차세대 포맷 지원**: WebP, JPEG, PNG 및 브라우저 지원 시 초고압축 **AVIF** 포맷까지 완벽 지원.
 
-## Expanding the ESLint configuration
+### 3. 세밀한 화질 / 용량 듀얼 제어
+- **화질 우선 모드 (%)**: 100% (무손실/최고), 95% (초고화질), 90% (고화질 추천), 85%, 75% 프리셋 및 1% 단위 미세 슬라이더 제공.
+- **목표 용량 모드 (MB)**: 20MB, 10MB, 5MB, 2MB, 1MB 및 직접 지정 지원 (업로드 용량 한도 맞춤).
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### 4. 인스타그램 최적화 모드
+- 기존의 느리고 품질이 낮던 `jpeg-js` 순수 소프트웨어 인코더를 완전히 제거하고 고품질 Pica 파이프라인으로 전환.
+- **비율 보호 레터박스(여백) 채우기**: 3:2 세로 사진이나 파노라마가 인스타그램의 피드 규격(4:5 또는 1.91:1)을 벗어나도 잘리지 않도록 보호:
+  - `화이트 프레임` (깔끔한 인스타 감성 흰색 여백)
+  - `블랙 프레임` (모던한 블랙 여백)
+  - `블러 배경` (사진 원본을 은은하게 블러 처리한 감성 배경)
+  - `여백 없음` (크롭 주의 경고 표시)
+
+### 5. 프리미엄 UX & 디자인
+- **전체 화면 드래그 앤 드롭**: 창 어디든 파일을 끌어다 놓아도 안전하게 추가되는 풀스크린 드롭존.
+- **비포/애프터(Before & After) 비교 뷰어**: 변환본과 원본의 해상도, 용량 절감률, EXIF 정보를 나란히 비교하고 100% 픽셀 확대로 화질 손실 유무를 직접 검증.
+- **다크 모드 & 라이트 모드**: Apple & Toss 스타일의 모던 글래스모피즘 인터페이스와 테마 토글 지원.
+- **병렬 동시 처리 & 진행률 표시**: 대량 변환 시 동시 2~3개 작업 처리로 빠른 속도 제공.
+- **ZIP 일괄 다운로드 & 파일명 설정**: 원본 이름 유지 또는 날짜_시간 접두사 선택 가능.
+
+---
+
+## 🛠️ 기술 스택 (Tech Stack)
+
+- **Frontend**: React 19, Vite 8, Framer Motion
+- **Styling**: Apple Glassmorphism CSS, Pretendard
+- **Image Processing**: Pica (Lanczos3 resizer), UTIF (TIFF/DNG decoder), Heic2any (HEIC/HEIF)
+- **Metadata**: Exifr, Piexifjs (EXIF parsing & APP1 injection)
+- **Packaging**: JSZip, Lucide React
+
+---
+
+## 📦 시작하기 (Getting Started)
+
+```bash
+# 의존성 설치
+npm install
+
+# 개발 서버 실행
+npm run dev
+
+# 프로덕션 빌드
+npm run build
+
+# 코드 린트 검사
+npm run lint
+```

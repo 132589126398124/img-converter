@@ -1,62 +1,271 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, Image as ImageIcon, Download, CheckCircle2, Loader2, X, Settings2, Trash2, Play, Package, AlertTriangle } from 'lucide-react';
+import {
+  Upload,
+  Image as ImageIcon,
+  Download,
+  CheckCircle2,
+  Loader2,
+  X,
+  Settings2,
+  Trash2,
+  Play,
+  Package,
+  AlertTriangle,
+  Moon,
+  Sun,
+  Eye,
+  RefreshCw,
+  Sparkles,
+  Sliders,
+  ShieldCheck,
+  Camera,
+  Maximize2
+} from 'lucide-react';
 import JSZip from 'jszip';
-import { processImage, processImageForInstagram } from './utils/imageProcessor';
+import { processImage, processImageForInstagram, isAvifSupported } from './utils/imageProcessor';
+import CompareModal from './components/CompareModal';
 import './App.css';
 
-const SIZE_OPTIONS = [
+const LONG_EDGE_PRESETS = [
+  { label: '원본 유지', value: 0 },
+  { label: '4096px (Ultra)', value: 4096 },
+  { label: '3840px (4K)', value: 3840 },
+  { label: '2560px (2K)', value: 2560 },
+  { label: '2048px (SNS)', value: 2048 },
+  { label: '1920px (FHD)', value: 1920 },
+  { label: '1080px (모바일)', value: 1080 },
+  { label: '직접 입력', value: -1 },
+];
+
+const QUALITY_PRESETS = [
+  { label: '100% (무손실/최고)', value: 100 },
+  { label: '95% (초고화질)', value: 95 },
+  { label: '90% (고화질 추천)', value: 90 },
+  { label: '85% (균형)', value: 85 },
+  { label: '75% (웹 최적화)', value: 75 },
+];
+
+const SIZE_PRESETS = [
   { label: '원본', value: 0 },
   { label: '20MB', value: 20 },
   { label: '10MB', value: 10 },
   { label: '5MB', value: 5 },
+  { label: '2MB', value: 2 },
   { label: '1MB', value: 1 },
 ];
 
 function App() {
   const [images, setImages] = useState([]);
-  const [targetSize, setTargetSize] = useState(0);
+  const [instagramMode, setInstagramMode] = useState(false);
   const [format, setFormat] = useState('webp');
+  const [avifSupported, setAvifSupported] = useState(false);
+
+  // Long edge settings
+  const [targetLongEdge, setTargetLongEdge] = useState(0); // 0 = original
+  const [customLongEdge, setCustomLongEdge] = useState('1920');
+  const [preventUpscale, setPreventUpscale] = useState(true);
+
+  // Quality settings
+  const [qualityMode, setQualityMode] = useState('quality'); // 'quality' | 'size'
+  const [qualityPercent, setQualityPercent] = useState(90);
+  const [targetSizeMB, setTargetSizeMB] = useState(10);
+
+  // Advanced settings
+  const [preserveExif, setPreserveExif] = useState(true);
+  const [fileNamePrefix, setFileNamePrefix] = useState('timestamp'); // 'timestamp' | 'none'
+
+  // Instagram mode settings
+  const [instaFrameMode, setInstaFrameMode] = useState('white'); // 'none' | 'white' | 'black' | 'blur'
+  const [instaTargetLongEdge, setInstaTargetLongEdge] = useState(2160);
+
+  // UI state
   const [isDragging, setIsDragging] = useState(false);
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
-  const [instagramMode, setInstagramMode] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  const [activeCompareImage, setActiveCompareImage] = useState(null);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
 
-  const handleFiles = useCallback((files) => {
-    const newImages = Array.from(files).map(file => ({
-      id: Math.random().toString(36).substr(2, 9),
-      file,
-      name: file.name,
-      status: 'pending',
-      result: null
-    }));
-    setImages(prev => [...newImages, ...prev]);
+  const dragCounter = useRef(0);
+
+  // Check AVIF support
+  useEffect(() => {
+    setAvifSupported(isAvifSupported());
   }, []);
 
+  // Theme effect
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
+  };
+
+  const handleFiles = useCallback((files) => {
+    const newImages = Array.from(files)
+      .filter(file => {
+        const name = file.name.toLowerCase();
+        return file.type.startsWith('image/') ||
+          name.endsWith('.tif') || name.endsWith('.tiff') ||
+          name.endsWith('.dng') || name.endsWith('.heic') ||
+          name.endsWith('.heif') || name.endsWith('.webp') ||
+          name.endsWith('.avif');
+      })
+      .map(file => ({
+        id: Math.random().toString(36).substring(2, 11),
+        file,
+        name: file.name,
+        status: 'pending',
+        result: null,
+        error: null,
+      }));
+
+    if (newImages.length > 0) {
+      setImages(prev => [...newImages, ...prev]);
+    }
+  }, []);
+
+  // Window-level Drag and Drop to prevent accidental navigation
+  useEffect(() => {
+    const handleDragEnter = (e) => {
+      e.preventDefault();
+      dragCounter.current += 1;
+      if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        setIsGlobalDragging(true);
+      }
+    };
+
+    const handleDragLeave = (e) => {
+      e.preventDefault();
+      dragCounter.current -= 1;
+      if (dragCounter.current <= 0) {
+        setIsGlobalDragging(false);
+        dragCounter.current = 0;
+      }
+    };
+
+    const handleDragOver = (e) => {
+      e.preventDefault();
+    };
+
+    const handleDrop = (e) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setIsGlobalDragging(false);
+      setIsDragging(false);
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        handleFiles(e.dataTransfer.files);
+      }
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, [handleFiles]);
+
+  const onDropZoneDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    handleFiles(e.dataTransfer.files);
+  };
+
+  const effectiveLongEdge = targetLongEdge === -1 ? (parseInt(customLongEdge, 10) || 0) : targetLongEdge;
+
+  // Single image conversion helper
+  const convertSingleImage = async (img) => {
+    if (instagramMode) {
+      return await processImageForInstagram(img.file, {
+        frameMode: instaFrameMode,
+        targetLongEdge: instaTargetLongEdge,
+        preserveExif,
+      });
+    } else {
+      return await processImage(img.file, {
+        format,
+        targetLongEdge: effectiveLongEdge,
+        preventUpscale,
+        qualityMode,
+        qualityPercent,
+        maxSizeMB: targetSizeMB,
+        preserveExif,
+      });
+    }
+  };
+
+  // Concurrency Pool Batch Converter (processes 2~3 images simultaneously)
   const startConversion = async () => {
     const pendingImages = images.filter(img => img.status === 'pending');
     if (pendingImages.length === 0) return;
 
     setIsProcessingAll(true);
-    for (const img of pendingImages) {
-      setImages(prev => prev.map(i => i.id === img.id ? { ...i, status: 'working' } : i));
-      const result = instagramMode
-        ? await processImageForInstagram(img.file)
-        : await processImage(img.file, { maxSizeMB: targetSize, format });
-      setImages(prev => prev.map(i => i.id === img.id ? { 
-        ...i, 
-        status: result.success ? 'done' : 'error',
-        result: result.success ? result : null,
-        error: result.success ? null : result.error
-      } : i));
-    }
+    const total = pendingImages.length;
+    let completedCount = 0;
+    setProgress({ current: 0, total });
+
+    const CONCURRENCY = 2; // balanced concurrency for mobile/desktop memory
+    let currentIndex = 0;
+
+    const worker = async () => {
+      while (currentIndex < pendingImages.length) {
+        const img = pendingImages[currentIndex++];
+        if (!img) break;
+
+        setImages(prev => prev.map(i => i.id === img.id ? { ...i, status: 'working' } : i));
+
+        const result = await convertSingleImage(img);
+
+        completedCount++;
+        setProgress({ current: completedCount, total });
+
+        setImages(prev => prev.map(i => {
+          if (i.id !== img.id) return i;
+          if (i.result?.preview) URL.revokeObjectURL(i.result.preview);
+          return {
+            ...i,
+            status: result.success ? 'done' : 'error',
+            result: result.success ? result : null,
+            error: result.success ? null : result.error,
+          };
+        }));
+      }
+    };
+
+    const workers = Array.from({ length: Math.min(CONCURRENCY, pendingImages.length) }, () => worker());
+    await Promise.all(workers);
+
     setIsProcessingAll(false);
   };
 
-  const onDrop = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFiles(e.dataTransfer.files);
+  // Retry individual image
+  const retryImage = async (id) => {
+    const target = images.find(img => img.id === id);
+    if (!target) return;
+
+    setImages(prev => prev.map(i => i.id === id ? { ...i, status: 'working', error: null } : i));
+    const result = await convertSingleImage(target);
+
+    setImages(prev => prev.map(i => {
+      if (i.id !== id) return i;
+      if (i.result?.preview) URL.revokeObjectURL(i.result.preview);
+      return {
+        ...i,
+        status: result.success ? 'done' : 'error',
+        result: result.success ? result : null,
+        error: result.success ? null : result.error,
+      };
+    }));
   };
 
   const removeImage = (id) => {
@@ -76,22 +285,24 @@ function App() {
     const hh = pad(now.getHours());
     const min = pad(now.getMinutes());
     const sec = pad(now.getSeconds());
-    return `${yy}${mm}${dd}${hh}${min}${sec}`;
+    return `${yy}${mm}${dd}_${hh}${min}${sec}`;
+  };
+
+  const buildOutputFileName = (img, timestamp) => {
+    const baseName = img.name.replace(/\.[^.]+$/, '');
+    const ext = img.result.format;
+    if (fileNamePrefix === 'timestamp') {
+      return `${timestamp || getFormattedTimestamp()}_${baseName}.${ext}`;
+    }
+    return `${baseName}.${ext}`;
   };
 
   const downloadImage = (img) => {
     if (!img.result) return;
     const link = document.createElement('a');
     link.href = img.result.preview;
-    const baseName = img.name.replace(/\.[^.]+$/, '');
-    link.download = `${getFormattedTimestamp()}_${baseName}.${img.result.format}`;
+    link.download = buildOutputFileName(img);
     link.click();
-  };
-
-  const getTimestamp = () => {
-    const now = new Date();
-    const pad = (n) => n.toString().padStart(2, '0');
-    return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   };
 
   const downloadAllAsZip = async () => {
@@ -100,19 +311,17 @@ function App() {
 
     setIsZipping(true);
     const zip = new JSZip();
-    const currentTimestamp = getFormattedTimestamp();
+    const batchTimestamp = getFormattedTimestamp();
 
     for (const img of completedImages) {
-      const baseName = img.name.replace(/\.[^.]+$/, '');
-      const fileName = `${currentTimestamp}_${baseName}.${img.result.format}`;
+      const fileName = buildOutputFileName(img, batchTimestamp);
       zip.file(fileName, img.result.file);
     }
 
     const content = await zip.generateAsync({ type: 'blob' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(content);
-    link.download = `converted_${currentTimestamp}.zip`;
-    
+    link.download = `lumina_converted_${batchTimestamp}.zip`;
     link.click();
     setIsZipping(false);
   };
@@ -128,151 +337,417 @@ function App() {
 
   return (
     <div className="app-container">
-      <header className="header" style={{marginBottom: '1rem'}}>
+      {/* Global Drag Overlay */}
+      <AnimatePresence>
+        {isGlobalDragging && (
+          <motion.div
+            className="global-drag-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <div className="drag-backdrop-card glass">
+              <Upload size={48} className="text-accent animate-bounce" />
+              <h2>어디든 사진을 놓으세요!</h2>
+              <p>JPG, PNG, WebP, AVIF, TIFF, HEIC, DNG 등 모든 포맷 지원</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Header */}
+      <header className="header">
+        <div className="header-top-row">
+          <div className="logo-badge">Lumina Flow 2.0</div>
+          <button className="theme-toggle-btn" onClick={toggleTheme} title="테마 변경">
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+        </div>
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
+          transition={{ duration: 0.7 }}
         >
-          <div className="logo-badge">Lumina Flow</div>
-          <h1>이미지의 흐름을 <br/>더 선명하고 가볍게</h1>
-          <p>사진을 올리고 변환 설정을 확인해 보세요.</p>
+          <h1>이미지의 흐름을<br />더 선명하고 가볍게</h1>
+          <p>손실 없는 초고화질 리사이징 & 메타데이터 보존 스튜디오</p>
         </motion.div>
       </header>
 
-      <motion.div 
+      {/* Main Area */}
+      <motion.div
         className="main-area"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2, duration: 0.6 }}
+        transition={{ delay: 0.15, duration: 0.6 }}
       >
-        <div 
+        {/* Dropzone */}
+        <div
           className={`dropzone glass ${isDragging ? 'active' : ''}`}
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
           onDragLeave={() => setIsDragging(false)}
-          onDrop={onDrop}
+          onDrop={onDropZoneDrop}
           onClick={() => document.getElementById('fileInput').click()}
         >
-          <input 
-            type="file" 
-            id="fileInput" 
-            multiple 
-            hidden 
-            accept="image/*,.tif,.tiff,.heic,.heif,.dng"
+          <input
+            type="file"
+            id="fileInput"
+            multiple
+            hidden
+            accept="image/*,.tif,.tiff,.heic,.heif,.dng,.avif"
             onChange={(e) => handleFiles(e.target.files)}
           />
           <div className="dropzone-content">
             <div className="icon-wrapper">
               <Upload size={32} />
             </div>
-            <h2>사진을 여기에 드래그하세요</h2>
-            <p>JPG, PNG, WebP, TIFF, HEIC, DNG 지원</p>
+            <h2>사진을 여기에 드래그하거나 클릭하여 추가</h2>
+            <p>JPG, PNG, WebP, AVIF, TIFF, HEIC, DNG 지원 • 여러 장 동시 선택 가능</p>
           </div>
         </div>
 
+        {/* Settings Panel */}
         <div className="settings-panel glass">
           <div className="settings-header">
-            <Settings2 size={18} />
-            <span>변환 설정</span>
-          </div>
-
-          <div className="setting-box" style={{ marginBottom: '1.5rem' }}>
-            <label>변환 모드</label>
+            <div className="settings-title">
+              <Settings2 size={18} />
+              <span>변환 설정</span>
+            </div>
             <div className="mode-selector">
               <button
                 className={`mode-btn ${!instagramMode ? 'active' : ''}`}
                 onClick={() => setInstagramMode(false)}
               >
-                기본
+                <Sparkles size={14} /> 기본 변환
               </button>
               <button
                 className={`mode-btn ${instagramMode ? 'active' : ''}`}
                 onClick={() => setInstagramMode(true)}
               >
-                인스타그램
+                <Camera size={14} /> 인스타그램 최적화
               </button>
             </div>
           </div>
 
           {!instagramMode ? (
-            <div className="settings-grid">
-              <div className="setting-box">
-                <label>목표 포맷</label>
-                <div className="select-wrapper">
-                  <select value={format} onChange={(e) => setFormat(e.target.value)}>
-                    <option value="webp">WebP</option>
-                    <option value="jpg">JPEG</option>
-                    <option value="png">PNG</option>
-                  </select>
+            <div className="settings-sections">
+              {/* Feature 2: Long Edge Resizing */}
+              <div className="setting-card">
+                <div className="card-heading">
+                  <div className="heading-left">
+                    <Maximize2 size={16} className="text-accent" />
+                    <label>장축(Long Edge) 기준 리사이즈</label>
+                  </div>
+                  <span className="heading-tip">가로/세로 비율 100% 자동 유지</span>
                 </div>
-              </div>
-              <div className="setting-box">
-                <label>목표 용량 <span>{SIZE_OPTIONS.find(o => o.value === targetSize)?.label}</span></label>
-                <div className="size-selector">
-                  {SIZE_OPTIONS.map(option => (
+
+                <div className="preset-chip-group">
+                  {LONG_EDGE_PRESETS.map(preset => (
                     <button
-                      key={option.value}
-                      className={`size-btn ${targetSize === option.value ? 'active' : ''}`}
-                      onClick={() => setTargetSize(option.value)}
+                      key={preset.value}
+                      className={`chip-btn ${targetLongEdge === preset.value ? 'active' : ''}`}
+                      onClick={() => setTargetLongEdge(preset.value)}
                     >
-                      {option.label}
+                      {preset.label}
                     </button>
                   ))}
+                </div>
+
+                {targetLongEdge === -1 && (
+                  <div className="custom-input-row">
+                    <span className="custom-label">장축 길이 직접 지정:</span>
+                    <div className="custom-input-wrap">
+                      <input
+                        type="number"
+                        min="100"
+                        max="16384"
+                        value={customLongEdge}
+                        onChange={(e) => setCustomLongEdge(e.target.value)}
+                        placeholder="예: 1920"
+                      />
+                      <span className="input-unit">px</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="checkbox-row">
+                  <label className="custom-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={preventUpscale}
+                      onChange={(e) => setPreventUpscale(e.target.checked)}
+                    />
+                    <span>작은 사진 확대 방지 (원본이 지정 크기보다 작으면 화질 유지를 위해 확대하지 않음)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Format & Quality Control */}
+              <div className="settings-grid">
+                {/* Target Format */}
+                <div className="setting-box">
+                  <label>목표 포맷</label>
+                  <div className="format-selector">
+                    <button
+                      className={`format-btn ${format === 'webp' ? 'active' : ''}`}
+                      onClick={() => setFormat('webp')}
+                    >
+                      <strong>WebP</strong>
+                      <small>추천 • 고압축</small>
+                    </button>
+                    <button
+                      className={`format-btn ${format === 'jpg' ? 'active' : ''}`}
+                      onClick={() => setFormat('jpg')}
+                    >
+                      <strong>JPEG</strong>
+                      <small>호환성 최고</small>
+                    </button>
+                    <button
+                      className={`format-btn ${format === 'png' ? 'active' : ''}`}
+                      onClick={() => setFormat('png')}
+                    >
+                      <strong>PNG</strong>
+                      <small>무손실 • 투명</small>
+                    </button>
+                    {avifSupported && (
+                      <button
+                        className={`format-btn ${format === 'avif' ? 'active' : ''}`}
+                        onClick={() => setFormat('avif')}
+                      >
+                        <strong>AVIF</strong>
+                        <small>차세대 규격</small>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quality / Target Size */}
+                <div className="setting-box">
+                  <div className="quality-mode-toggle">
+                    <label>화질 및 압축 설정</label>
+                    <div className="toggle-tabs">
+                      <button
+                        className={`toggle-tab ${qualityMode === 'quality' ? 'active' : ''}`}
+                        onClick={() => setQualityMode('quality')}
+                      >
+                        화질 기준 (%)
+                      </button>
+                      <button
+                        className={`toggle-tab ${qualityMode === 'size' ? 'active' : ''}`}
+                        onClick={() => setQualityMode('size')}
+                      >
+                        목표 용량 (MB)
+                      </button>
+                    </div>
+                  </div>
+
+                  {qualityMode === 'quality' ? (
+                    <div className="quality-controls">
+                      <div className="slider-row">
+                        <input
+                          type="range"
+                          min="50"
+                          max="100"
+                          step="1"
+                          value={qualityPercent}
+                          onChange={(e) => setQualityPercent(Number(e.target.value))}
+                          disabled={format === 'png'}
+                        />
+                        <span className="slider-val">
+                          {format === 'png' ? '무손실' : `${qualityPercent}%`}
+                        </span>
+                      </div>
+                      <div className="size-selector">
+                        {QUALITY_PRESETS.map(opt => (
+                          <button
+                            key={opt.value}
+                            className={`size-btn ${qualityPercent === opt.value ? 'active' : ''}`}
+                            onClick={() => setQualityPercent(opt.value)}
+                            disabled={format === 'png'}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="size-controls">
+                      <div className="size-selector">
+                        {SIZE_PRESETS.map(opt => (
+                          <button
+                            key={opt.value}
+                            className={`size-btn ${targetSizeMB === opt.value ? 'active' : ''}`}
+                            onClick={() => setTargetSizeMB(opt.value)}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                      <small className="setting-desc">목표 용량 이내로 사진의 픽셀 손상을 최소화하여 압축합니다.</small>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Advanced Options Bar */}
+              <div className="advanced-options-bar">
+                <label className="custom-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={preserveExif}
+                    onChange={(e) => setPreserveExif(e.target.checked)}
+                  />
+                  <ShieldCheck size={16} className="text-success" />
+                  <span>EXIF 촬영 메타데이터 보존 (카메라, 렌즈, 촬영일시, 노출 설정 유지)</span>
+                </label>
+
+                <div className="file-name-setting">
+                  <span>저장 파일명:</span>
+                  <button
+                    className={`mini-pill ${fileNamePrefix === 'none' ? 'active' : ''}`}
+                    onClick={() => setFileNamePrefix('none')}
+                  >
+                    원본 이름 유지
+                  </button>
+                  <button
+                    className={`mini-pill ${fileNamePrefix === 'timestamp' ? 'active' : ''}`}
+                    onClick={() => setFileNamePrefix('timestamp')}
+                  >
+                    날짜_시간 접두사
+                  </button>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="instagram-info">
-              <div className="instagram-info-row">
-                <span className="instagram-info-label">포맷</span>
-                <span>JPEG (자동)</span>
+            /* Instagram Mode Settings */
+            <div className="instagram-settings-area">
+              <div className="insta-hero-card">
+                <div className="insta-hero-info">
+                  <h4>인스타그램 고화질 최적화 모드</h4>
+                  <p>화질 저하가 심했던 기존 소프트웨어 인코더를 완전히 제거하고, Lanczos3 고성능 파이프라인으로 최대 10MB 고화질 JPEG 변환 및 EXIF를 보존합니다.</p>
+                </div>
               </div>
-              <div className="instagram-info-row">
-                <span className="instagram-info-label">최대 해상도</span>
-                <span>장축 4096px</span>
-              </div>
-              <div className="instagram-info-row">
-                <span className="instagram-info-label">최대 용량</span>
-                <span>10MB</span>
-              </div>
-              <div className="instagram-info-row">
-                <span className="instagram-info-label">지원 화면비</span>
-                <span>1.91:1 (가로) ~ 4:5 (세로)</span>
+
+              <div className="insta-options-grid">
+                <div className="setting-box">
+                  <label>인스타그램 업로드 장축 해상도</label>
+                  <div className="preset-chip-group">
+                    <button
+                      className={`chip-btn ${instaTargetLongEdge === 2160 ? 'active' : ''}`}
+                      onClick={() => setInstaTargetLongEdge(2160)}
+                    >
+                      2160px (고화질 추천)
+                    </button>
+                    <button
+                      className={`chip-btn ${instaTargetLongEdge === 1080 ? 'active' : ''}`}
+                      onClick={() => setInstaTargetLongEdge(1080)}
+                    >
+                      1080px (표준 피드)
+                    </button>
+                    <button
+                      className={`chip-btn ${instaTargetLongEdge === 4096 ? 'active' : ''}`}
+                      onClick={() => setInstaTargetLongEdge(4096)}
+                    >
+                      4096px (인스타 최대 한도)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="setting-box">
+                  <label>비율 초과 시 무손실 레터박스(여백) 채우기</label>
+                  <div className="preset-chip-group">
+                    <button
+                      className={`chip-btn ${instaFrameMode === 'white' ? 'active' : ''}`}
+                      onClick={() => setInstaFrameMode('white')}
+                    >
+                      화이트 프레임 (깔끔)
+                    </button>
+                    <button
+                      className={`chip-btn ${instaFrameMode === 'black' ? 'active' : ''}`}
+                      onClick={() => setInstaFrameMode('black')}
+                    >
+                      블랙 프레임 (모던)
+                    </button>
+                    <button
+                      className={`chip-btn ${instaFrameMode === 'blur' ? 'active' : ''}`}
+                      onClick={() => setInstaFrameMode('blur')}
+                    >
+                      블러 배경 (감성 프레임)
+                    </button>
+                    <button
+                      className={`chip-btn ${instaFrameMode === 'none' ? 'active' : ''}`}
+                      onClick={() => setInstaFrameMode('none')}
+                    >
+                      여백 없음 (크롭 경고)
+                    </button>
+                  </div>
+                  <small className="setting-desc">
+                    3:2 세로 사진이나 와이드 파노라마가 인스타 규격(4:5 또는 1.91:1)을 벗어나도 잘리지 않도록 여백을 채워 보호합니다.
+                  </small>
+                </div>
               </div>
             </div>
           )}
 
+          {/* Start Conversion Button & Progress */}
           {images.some(img => img.status === 'pending') && (
-            <button
-              className="convert-main-btn"
-              onClick={startConversion}
-              disabled={isProcessingAll}
-            >
-              {isProcessingAll ? (
-                <><Loader2 className="animate-spin" size={20} /> 변환 중...</>
-              ) : (
-                <><Play size={20} fill="currentColor" /> 사진 변환 시작하기</>
-              )}
-            </button>
+            <div className="action-row">
+              <button
+                className="convert-main-btn"
+                onClick={startConversion}
+                disabled={isProcessingAll}
+              >
+                {isProcessingAll ? (
+                  <>
+                    <Loader2 className="animate-spin" size={20} />
+                    <span>변환 진행 중 ({progress.current} / {progress.total})</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={20} fill="currentColor" />
+                    <span>
+                      {images.filter(i => i.status === 'pending').length}장 사진 고화질 변환 시작하기
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {isProcessingAll && progress.total > 0 && (
+            <div className="progress-bar-wrap">
+              <div
+                className="progress-bar-fill"
+                style={{ width: `${(progress.current / progress.total) * 100}%` }}
+              />
+            </div>
           )}
         </div>
       </motion.div>
 
+      {/* Results Section */}
       <div className="results-container">
         <div className="results-header">
-          <h3>작업 목록 <span>{images.length}장</span></h3>
+          <div className="results-title-wrap">
+            <h3>작업 목록</h3>
+            <span className="badge-counter">{images.length}장</span>
+            {images.some(i => i.status === 'done') && (
+              <span className="badge-done">
+                {images.filter(i => i.status === 'done').length}장 완료
+              </span>
+            )}
+          </div>
           <div className="header-actions">
             {images.length > 0 && (
               <>
-                <button className="clear-btn" onClick={clearAll}>
-                  <Trash2 size={16} /> 구성 비우기
+                <button className="clear-btn" onClick={clearAll} disabled={isProcessingAll}>
+                  <Trash2 size={16} /> 목록 비우기
                 </button>
                 {images.some(img => img.status === 'done') && (
                   <button className="download-all-btn" onClick={downloadAllAsZip} disabled={isZipping}>
                     {isZipping ? (
                       <><Loader2 className="animate-spin" size={16} /> 압축 중...</>
                     ) : (
-                      <><Package size={16} /> 모든 결과 압축 저장</>
+                      <><Package size={16} /> 모든 결과 ZIP 다운로드</>
                     )}
                   </button>
                 )}
@@ -281,18 +756,23 @@ function App() {
           </div>
         </div>
 
+        {/* Image Grid */}
         <div className="image-grid">
           <AnimatePresence mode="popLayout">
             {images.map((img) => (
-              <motion.div 
+              <motion.div
                 key={img.id}
                 layout
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9, y: 10 }}
-                className={`image-card glass ${img.status === 'done' ? 'card-done' : ''}`}
+                exit={{ opacity: 0, scale: 0.85, y: 10 }}
+                className={`image-card glass ${img.status === 'done' ? 'card-done' : ''} ${img.status === 'error' ? 'card-error' : ''}`}
               >
-                <div className="card-preview">
+                <div
+                  className="card-preview"
+                  onClick={() => img.result && setActiveCompareImage(img)}
+                  title={img.result ? "클릭하여 비포/애프터 화질 비교" : ""}
+                >
                   {img.result ? (
                     <img src={img.result.preview} alt="preview" />
                   ) : (
@@ -300,29 +780,60 @@ function App() {
                       <ImageIcon size={32} />
                     </div>
                   )}
+
                   {img.status === 'working' && (
                     <div className="processing-overlay">
-                      <Loader2 className="animate-spin" size={24} />
+                      <Loader2 className="animate-spin" size={28} />
+                      <span>고화질 처리 중...</span>
                     </div>
                   )}
+
+                  {img.status === 'done' && (
+                    <button
+                      className="card-inspect-badge"
+                      onClick={(e) => { e.stopPropagation(); setActiveCompareImage(img); }}
+                      title="화질 & 상세 비교"
+                    >
+                      <Eye size={14} /> 비교 보기
+                    </button>
+                  )}
                 </div>
-                
+
                 <div className="card-body">
                   <div className="card-title">
-                    <h4>{img.name}</h4>
-                    {(img.status === 'pending' || img.status === 'error') && (
-                      <button className="item-remove-btn" onClick={() => removeImage(img.id)}>
-                        <X size={14} />
+                    <h4 title={img.name}>{img.name}</h4>
+                    {img.status !== 'working' && (
+                      <button className="item-remove-btn" onClick={() => removeImage(img.id)} title="항목 삭제">
+                        <X size={15} />
                       </button>
                     )}
                   </div>
+
+                  {/* Resolution & Size Specs */}
+                  <div className="card-meta">
+                    {img.result ? (
+                      <div className="meta-row">
+                        <span className="res-badge">
+                          {img.result.outputWidth} × {img.result.outputHeight} px
+                        </span>
+                        <span className="format-tag">{img.result.format.toUpperCase()}</span>
+                      </div>
+                    ) : (
+                      <div className="meta-row">
+                        <span className="size-txt">{(img.file.size / 1024 / 1024).toFixed(2)} MB</span>
+                        <span className="status-pill pending">대기 중</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer status & Actions */}
                   <div className="card-footer">
                     <div className="card-info">
                       {img.status === 'done' ? (() => {
                         const ratio = parseFloat(img.result.ratio);
                         return (
                           <div className="success-tag">
-                            <CheckCircle2 size={12} />
+                            <CheckCircle2 size={13} />
                             <span>
                               {ratio >= 0 ? `${ratio}% 절감` : `${Math.abs(ratio)}% 증가`}
                               {' '}({(img.result.compressedSize / 1024 / 1024).toFixed(2)} MB)
@@ -330,22 +841,34 @@ function App() {
                           </div>
                         );
                       })() : img.status === 'working' ? (
-                        <span className="working-txt">변환 중...</span>
+                        <span className="working-txt">고성능 리사이징...</span>
                       ) : img.status === 'error' ? (
-                        <span className="error-txt">변환 실패 — {img.error}</span>
+                        <span className="error-txt" title={img.error}>
+                          변환 실패: {img.error}
+                        </span>
                       ) : (
-                        <span className="size-txt">대기 중 • {(img.file.size / 1024 / 1024).toFixed(2)} MB</span>
+                        <span className="ready-txt">변환 대기</span>
                       )}
                     </div>
-                    {img.status === 'done' && (
-                      <button className="individual-save-btn" onClick={() => downloadImage(img)}>
-                        <Download size={14} /> 저장
-                      </button>
-                    )}
+
+                    <div className="card-actions">
+                      {img.status === 'error' && (
+                        <button className="retry-btn" onClick={() => retryImage(img.id)} title="재시도">
+                          <RefreshCw size={14} /> 재시도
+                        </button>
+                      )}
+                      {img.status === 'done' && (
+                        <button className="individual-save-btn" onClick={() => downloadImage(img)}>
+                          <Download size={14} /> 저장
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Warning tag if present */}
                   {img.result?.warning && (
                     <div className="warning-tag">
-                      <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 2 }} />
                       <span>{img.result.warning}</span>
                     </div>
                   )}
@@ -355,6 +878,15 @@ function App() {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Compare Modal */}
+      {activeCompareImage && (
+        <CompareModal
+          image={activeCompareImage}
+          onClose={() => setActiveCompareImage(null)}
+          onDownload={downloadImage}
+        />
+      )}
     </div>
   );
 }
