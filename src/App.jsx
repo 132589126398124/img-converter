@@ -20,7 +20,9 @@ import {
   Sliders,
   ShieldCheck,
   Camera,
-  Maximize2
+  Maximize2,
+  Columns,
+  Layers
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { processImage, processImageForInstagram, isAvifSupported } from './utils/imageProcessor';
@@ -78,6 +80,9 @@ function App() {
   // Instagram mode settings
   const [instaFrameMode, setInstaFrameMode] = useState('white'); // 'none' | 'white' | 'black' | 'blur'
   const [instaTargetLongEdge, setInstaTargetLongEdge] = useState(2160);
+  const [instaSplitMode, setInstaSplitMode] = useState('none'); // 'none' | '2' | '3'
+  const [instaSplitFit, setInstaSplitFit] = useState('crop'); // 'crop' | 'fit'
+  const [activeSliceMap, setActiveSliceMap] = useState({}); // { [imgId]: sliceIndex }
 
   // UI state
   const [isDragging, setIsDragging] = useState(false);
@@ -205,6 +210,8 @@ function App() {
         frameMode: instaFrameMode,
         targetLongEdge: instaTargetLongEdge,
         preserveExif,
+        splitMode: instaSplitMode,
+        splitFit: instaSplitFit,
       });
     } else {
       return await processImage(img.file, {
@@ -246,7 +253,11 @@ function App() {
 
         setImages(prev => prev.map(i => {
           if (i.id !== img.id) return i;
-          if (i.result?.preview) URL.revokeObjectURL(i.result.preview);
+          if (i.result?.slices) {
+            i.result.slices.forEach(s => { if (s.preview) URL.revokeObjectURL(s.preview); });
+          } else if (i.result?.preview) {
+            URL.revokeObjectURL(i.result.preview);
+          }
           return {
             ...i,
             status: result.success ? 'done' : 'error',
@@ -273,7 +284,11 @@ function App() {
 
     setImages(prev => prev.map(i => {
       if (i.id !== id) return i;
-      if (i.result?.preview) URL.revokeObjectURL(i.result.preview);
+      if (i.result?.slices) {
+        i.result.slices.forEach(s => { if (s.preview) URL.revokeObjectURL(s.preview); });
+      } else if (i.result?.preview) {
+        URL.revokeObjectURL(i.result.preview);
+      }
       return {
         ...i,
         status: result.success ? 'done' : 'error',
@@ -286,7 +301,11 @@ function App() {
   const removeImage = (id) => {
     setImages(prev => {
       const target = prev.find(img => img.id === id);
-      if (target?.result?.preview) URL.revokeObjectURL(target.result.preview);
+      if (target?.result?.slices) {
+        target.result.slices.forEach(s => { if (s.preview) URL.revokeObjectURL(s.preview); });
+      } else if (target?.result?.preview) {
+        URL.revokeObjectURL(target.result.preview);
+      }
       return prev.filter(img => img.id !== id);
     });
   };
@@ -303,21 +322,45 @@ function App() {
     return `${yy}${mm}${dd}_${hh}${min}${sec}`;
   };
 
-  const buildOutputFileName = (img, timestamp) => {
+  const buildOutputFileName = (img, timestamp, sliceIndex = null) => {
     const baseName = img.name.replace(/\.[^.]+$/, '');
     const ext = img.result.format;
-    if (fileNamePrefix === 'timestamp') {
-      return `${timestamp || getFormattedTimestamp()}_${baseName}.${ext}`;
+    const prefix = fileNamePrefix === 'timestamp' ? `${timestamp || getFormattedTimestamp()}_` : '';
+    if (sliceIndex !== null) {
+      const padIdx = String(sliceIndex).padStart(2, '0');
+      return `${prefix}${baseName}_part${padIdx}.${ext}`;
     }
-    return `${baseName}.${ext}`;
+    return `${prefix}${baseName}.${ext}`;
   };
 
-  const downloadImage = (img) => {
+  const downloadImage = (img, specificSliceIdx = null) => {
     if (!img.result) return;
-    const link = document.createElement('a');
-    link.href = img.result.preview;
-    link.download = buildOutputFileName(img);
-    link.click();
+    if (img.result.isSplit && img.result.slices && img.result.slices.length > 1) {
+      if (specificSliceIdx !== null) {
+        const slice = img.result.slices[specificSliceIdx];
+        if (slice) {
+          const link = document.createElement('a');
+          link.href = slice.preview;
+          link.download = buildOutputFileName(img, null, slice.index);
+          link.click();
+        }
+      } else {
+        // Download all slices sequentially with small interval to prevent browser block
+        img.result.slices.forEach((slice, idx) => {
+          setTimeout(() => {
+            const link = document.createElement('a');
+            link.href = slice.preview;
+            link.download = buildOutputFileName(img, null, slice.index);
+            link.click();
+          }, idx * 180);
+        });
+      }
+    } else {
+      const link = document.createElement('a');
+      link.href = img.result.preview;
+      link.download = buildOutputFileName(img);
+      link.click();
+    }
   };
 
   const downloadAllAsZip = async () => {
@@ -329,8 +372,15 @@ function App() {
     const batchTimestamp = getFormattedTimestamp();
 
     for (const img of completedImages) {
-      const fileName = buildOutputFileName(img, batchTimestamp);
-      zip.file(fileName, img.result.file);
+      if (img.result?.isSplit && img.result.slices && img.result.slices.length > 1) {
+        img.result.slices.forEach(slice => {
+          const fileName = buildOutputFileName(img, batchTimestamp, slice.index);
+          zip.file(fileName, slice.file);
+        });
+      } else {
+        const fileName = buildOutputFileName(img, batchTimestamp);
+        zip.file(fileName, img.result.file);
+      }
     }
 
     const content = await zip.generateAsync({ type: 'blob' });
@@ -344,7 +394,11 @@ function App() {
   const clearAll = () => {
     setImages(prev => {
       prev.forEach(img => {
-        if (img?.result?.preview) URL.revokeObjectURL(img.result.preview);
+        if (img?.result?.slices) {
+          img.result.slices.forEach(s => { if (s.preview) URL.revokeObjectURL(s.preview); });
+        } else if (img?.result?.preview) {
+          URL.revokeObjectURL(img.result.preview);
+        }
       });
       return [];
     });
@@ -646,8 +700,62 @@ function App() {
               </div>
 
               <div className="insta-options-grid">
+                {/* Panorama Carousel Slicing Section */}
+                <div className="setting-card">
+                  <div className="card-heading">
+                    <div className="heading-left">
+                      <Columns size={16} className="text-accent" />
+                      <label>가로사진 파노라마 캐러셀 분할 (Carousel Split)</label>
+                    </div>
+                    <span className="heading-tip">가로 사진 → 4:5 세로 2장 또는 3장 분할</span>
+                  </div>
+
+                  <div className="preset-chip-group">
+                    <button
+                      className={`chip-btn ${instaSplitMode === 'none' ? 'active' : ''}`}
+                      onClick={() => setInstaSplitMode('none')}
+                    >
+                      분할 안함 (1장)
+                    </button>
+                    <button
+                      className={`chip-btn ${instaSplitMode === '2' ? 'active' : ''}`}
+                      onClick={() => setInstaSplitMode('2')}
+                    >
+                      2장 쪼개기 (2분할 4:5)
+                    </button>
+                    <button
+                      className={`chip-btn ${instaSplitMode === '3' ? 'active' : ''}`}
+                      onClick={() => setInstaSplitMode('3')}
+                    >
+                      3장 쪼개기 (3분할 4:5)
+                    </button>
+                  </div>
+
+                  {instaSplitMode !== 'none' && (
+                    <div className="split-fit-selector">
+                      <span className="split-fit-label">분할 맞춤 방식:</span>
+                      <button
+                        className={`mini-pill ${instaSplitFit === 'crop' ? 'active' : ''}`}
+                        onClick={() => setInstaSplitFit('crop')}
+                      >
+                        화면 꽉 채우기 (여백 없이 크롭)
+                      </button>
+                      <button
+                        className={`mini-pill ${instaSplitFit === 'fit' ? 'active' : ''}`}
+                        onClick={() => setInstaSplitFit('fit')}
+                      >
+                        전체 사진 보존 (여백 채우기)
+                      </button>
+                    </div>
+                  )}
+
+                  <small className="setting-desc">
+                    와이드 가로 사진을 인스타그램 피드에서 좌우로 자연스럽게 스와이프하며 이어지는 4:5 세로 규격으로 정밀 분할합니다.
+                  </small>
+                </div>
+
                 <div className="setting-box">
-                  <label>인스타그램 업로드 장축 해상도</label>
+                  <label>인스타그램 세로 사진 장축(높이) 해상도</label>
                   <div className="preset-chip-group">
                     <button
                       className={`chip-btn ${instaTargetLongEdge === 2160 ? 'active' : ''}`}
@@ -656,10 +764,10 @@ function App() {
                       2160px (고화질 추천)
                     </button>
                     <button
-                      className={`chip-btn ${instaTargetLongEdge === 1080 ? 'active' : ''}`}
-                      onClick={() => setInstaTargetLongEdge(1080)}
+                      className={`chip-btn ${instaTargetLongEdge === 1350 ? 'active' : ''}`}
+                      onClick={() => setInstaTargetLongEdge(1350)}
                     >
-                      1080px (표준 피드)
+                      1350px (인스타 표준 4:5)
                     </button>
                     <button
                       className={`chip-btn ${instaTargetLongEdge === 4096 ? 'active' : ''}`}
@@ -671,7 +779,11 @@ function App() {
                 </div>
 
                 <div className="setting-box">
-                  <label>비율 초과 시 무손실 레터박스(여백) 채우기</label>
+                  <label>
+                    {instaSplitMode !== 'none' && instaSplitFit === 'fit'
+                      ? '분할 테두리 여백 프레임 스타일'
+                      : '비율 초과 시 무손실 레터박스(여백) 채우기'}
+                  </label>
                   <div className="preset-chip-group">
                     <button
                       className={`chip-btn ${instaFrameMode === 'white' ? 'active' : ''}`}
@@ -699,7 +811,7 @@ function App() {
                     </button>
                   </div>
                   <small className="setting-desc">
-                    3:2 세로 사진이나 와이드 파노라마가 인스타 규격(4:5 또는 1.91:1)을 벗어나도 잘리지 않도록 여백을 채워 보호합니다.
+                    사진이 인스타 규격을 벗어나도 잘리지 않도록 테두리 여백을 채워 완벽한 구도를 유지합니다.
                   </small>
                 </div>
               </div>
@@ -792,10 +904,31 @@ function App() {
                   title={img.result ? "클릭하여 비포/애프터 화질 비교" : ""}
                 >
                   {img.result ? (
-                    <img src={img.result.preview} alt="preview" />
+                    <img
+                      src={
+                        img.result.isSplit && img.result.slices
+                          ? (img.result.slices[activeSliceMap[img.id] || 0]?.preview || img.result.preview)
+                          : img.result.preview
+                      }
+                      alt="preview"
+                    />
                   ) : (
                     <div className="placeholder-icon">
                       <ImageIcon size={32} />
+                    </div>
+                  )}
+
+                  {img.result?.isSplit && img.result.slices && (
+                    <div className="card-slice-tabs" onClick={(e) => e.stopPropagation()}>
+                      {img.result.slices.map((slice, idx) => (
+                        <button
+                          key={slice.index}
+                          className={`card-slice-tab ${(activeSliceMap[img.id] || 0) === idx ? 'active' : ''}`}
+                          onClick={() => setActiveSliceMap(prev => ({ ...prev, [img.id]: idx }))}
+                        >
+                          {slice.index}/{img.result.splitCount}
+                        </button>
+                      ))}
                     </div>
                   )}
 
@@ -832,9 +965,11 @@ function App() {
                     {img.result ? (
                       <div className="meta-row">
                         <span className="res-badge">
-                          {img.result.outputWidth} × {img.result.outputHeight} px
+                          {img.result.isSplit ? `각 ${img.result.outputWidth} × ${img.result.outputHeight} px` : `${img.result.outputWidth} × ${img.result.outputHeight} px`}
                         </span>
-                        <span className="format-tag">{img.result.format.toUpperCase()}</span>
+                        <span className="format-tag">
+                          {img.result.isSplit ? `4:5 세로 ${img.result.splitCount}분할` : img.result.format.toUpperCase()}
+                        </span>
                       </div>
                     ) : (
                       <div className="meta-row">
@@ -877,7 +1012,7 @@ function App() {
                       )}
                       {img.status === 'done' && (
                         <button className="individual-save-btn" onClick={() => downloadImage(img)}>
-                          <Download size={14} /> 저장
+                          <Download size={14} /> {img.result?.isSplit ? `분할본 ${img.result.splitCount}장 저장` : '저장'}
                         </button>
                       )}
                     </div>

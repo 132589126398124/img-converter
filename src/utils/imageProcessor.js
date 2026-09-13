@@ -346,13 +346,16 @@ export const processImage = async (file, options = {}) => {
  */
 export const processImageForInstagram = async (file, options = {}) => {
   const {
-    frameMode = 'none', // 'none' | 'white' | 'black' | 'blur'
+    frameMode = 'white', // 'none' | 'white' | 'black' | 'blur'
     targetLongEdge = 2160,
     preserveExif = true,
+    splitMode = 'none', // 'none' | '2' | '3'
+    splitFit = 'crop',  // 'crop' (화면 꽉 채우기) | 'fit' (전체 사진 보존)
   } = options;
 
   let sourceCanvas = null;
   let finalCanvas = null;
+  let compositeCanvas = null;
 
   try {
     let sourceBlob = file;
@@ -367,8 +370,135 @@ export const processImageForInstagram = async (file, options = {}) => {
     const exifSummary = await extractExifMetadata(file);
     const { width: origWidth, height: origHeight, aspectRatio } = await getImageDimensions(sourceBlob);
 
+    sourceCanvas = await blobToCanvas(sourceBlob);
+
+    const isSplitRequested = (splitMode === '2' || splitMode === '3' || splitMode === 2 || splitMode === 3);
+
+    // Panorama Slicing for Landscape Photos (width > height)
+    if (isSplitRequested && origWidth > origHeight) {
+      const splitCount = parseInt(splitMode, 10); // 2 or 3
+      // Instagram 4:5 vertical portrait standard: ratio = 0.8
+      const hCut = Math.min(targetLongEdge, Math.max(origHeight, 1350));
+      const wCut = Math.round(hCut * 0.8);
+      const wTotal = splitCount * wCut;
+      const hTotal = hCut;
+
+      let scale, sw, sh, dx, dy;
+      if (splitFit === 'fit') {
+        // Fit whole photo without cropping (padding if needed)
+        scale = Math.min(wTotal / origWidth, hTotal / origHeight);
+        sw = Math.round(origWidth * scale);
+        sh = Math.round(origHeight * scale);
+        dx = Math.round((wTotal - sw) / 2);
+        dy = Math.round((hTotal - sh) / 2);
+      } else {
+        // Fill & crop to fill canvas without borders
+        scale = Math.max(wTotal / origWidth, hTotal / origHeight);
+        sw = Math.round(origWidth * scale);
+        sh = Math.round(origHeight * scale);
+        dx = Math.round((wTotal - sw) / 2);
+        dy = Math.round((hTotal - sh) / 2);
+      }
+
+      compositeCanvas = document.createElement('canvas');
+      compositeCanvas.width = wTotal;
+      compositeCanvas.height = hTotal;
+      const compCtx = compositeCanvas.getContext('2d');
+
+      if (splitFit === 'fit') {
+        if (frameMode === 'black') {
+          compCtx.fillStyle = '#000000';
+          compCtx.fillRect(0, 0, wTotal, hTotal);
+        } else if (frameMode === 'blur') {
+          compCtx.save();
+          compCtx.filter = 'blur(40px) brightness(0.9)';
+          compCtx.drawImage(sourceCanvas, -20, -20, wTotal + 40, hTotal + 40);
+          compCtx.restore();
+          compCtx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+          compCtx.fillRect(0, 0, wTotal, hTotal);
+        } else {
+          compCtx.fillStyle = '#ffffff';
+          compCtx.fillRect(0, 0, wTotal, hTotal);
+        }
+      }
+
+      // High-quality resizing to target composite size
+      const resizedSrc = await resizeCanvasHighQuality(sourceCanvas, sw, sh);
+      compCtx.drawImage(resizedSrc, dx, dy);
+      resizedSrc.width = 0;
+      resizedSrc.height = 0;
+
+      // Slice compositeCanvas into N individual 4:5 vertical canvases
+      const slices = [];
+      const maxBytes = 10 * 1024 * 1024;
+
+      for (let i = 0; i < splitCount; i++) {
+        const sliceCanvas = document.createElement('canvas');
+        sliceCanvas.width = wCut;
+        sliceCanvas.height = hCut;
+        const sliceCtx = sliceCanvas.getContext('2d');
+
+        sliceCtx.drawImage(
+          compositeCanvas,
+          i * wCut, 0, wCut, hCut,
+          0, 0, wCut, hCut
+        );
+
+        let quality = 0.94;
+        let sliceBlob = await canvasToBlob(sliceCanvas, 'image/jpeg', quality);
+        while (sliceBlob.size > maxBytes && quality > 0.65) {
+          quality -= 0.05;
+          sliceBlob = await canvasToBlob(sliceCanvas, 'image/jpeg', quality);
+        }
+
+        if (preserveExif) {
+          sliceBlob = await attachExifToJpeg(sliceBlob, file);
+        }
+
+        const slicePreview = URL.createObjectURL(sliceBlob);
+        slices.push({
+          index: i + 1,
+          total: splitCount,
+          file: sliceBlob,
+          preview: slicePreview,
+          width: wCut,
+          height: hCut,
+          size: sliceBlob.size,
+        });
+
+        sliceCanvas.width = 0;
+        sliceCanvas.height = 0;
+      }
+
+      const totalCompressedSize = slices.reduce((acc, s) => acc + s.size, 0);
+
+      return {
+        success: true,
+        isSplit: true,
+        splitCount,
+        splitFit,
+        slices,
+        file: slices[0].file,
+        preview: slices[0].preview,
+        format: 'jpg',
+        originalSize: file.size,
+        compressedSize: totalCompressedSize,
+        originalWidth: origWidth,
+        originalHeight: origHeight,
+        outputWidth: wCut,
+        outputHeight: hCut,
+        ratio: ((1 - totalCompressedSize / file.size) * 100).toFixed(1),
+        exif: exifSummary,
+      };
+    }
+
+    // Single-image Instagram processing (non-split or vertical/square photos)
     let warning = null;
     let needsPadding = false;
+
+    if (isSplitRequested && origWidth <= origHeight) {
+      warning = '세로 또는 정사각형 사진은 가로 파노라마 분할 대상이 아니므로 인스타그램 최적 세로 1장으로 변환되었습니다.';
+    }
 
     if (aspectRatio > INSTAGRAM_MAX_LANDSCAPE) {
       if (frameMode === 'none') {
@@ -384,21 +514,16 @@ export const processImageForInstagram = async (file, options = {}) => {
       }
     }
 
-    sourceCanvas = await blobToCanvas(sourceBlob);
-
     if (needsPadding && frameMode !== 'none') {
-      // Calculate framed dimensions
       let frameW, frameH;
       let imgW, imgH;
 
       if (aspectRatio < INSTAGRAM_MIN_PORTRAIT) {
-        // Vertical image taller than 4:5 -> Pad sides to reach 4:5
         imgH = Math.min(origHeight, targetLongEdge);
         imgW = Math.round(imgH * aspectRatio);
         frameH = imgH;
         frameW = Math.round(frameH * INSTAGRAM_MIN_PORTRAIT);
       } else {
-        // Landscape image wider than 1.91:1 -> Pad top/bottom to reach 1.91:1
         imgW = Math.min(origWidth, targetLongEdge);
         imgH = Math.round(imgW / aspectRatio);
         frameW = imgW;
@@ -417,22 +542,18 @@ export const processImageForInstagram = async (file, options = {}) => {
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, frameW, frameH);
       } else if (frameMode === 'blur') {
-        // Draw blurred background covering canvas
         ctx.save();
         ctx.filter = 'blur(40px) brightness(0.9)';
         ctx.drawImage(sourceCanvas, -20, -20, frameW + 40, frameH + 40);
         ctx.restore();
-        // Add subtle overlay
         ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
         ctx.fillRect(0, 0, frameW, frameH);
       }
 
-      // Draw resized image centered
       const resizedImgCanvas = await resizeCanvasHighQuality(sourceCanvas, imgW, imgH);
       const offsetX = Math.round((frameW - imgW) / 2);
       const offsetY = Math.round((frameH - imgH) / 2);
 
-      // Subtle shadow for aesthetic frame
       if (frameMode === 'white' || frameMode === 'blur') {
         ctx.shadowColor = 'rgba(0, 0, 0, 0.12)';
         ctx.shadowBlur = 24;
@@ -442,7 +563,6 @@ export const processImageForInstagram = async (file, options = {}) => {
       resizedImgCanvas.width = 0;
       resizedImgCanvas.height = 0;
     } else {
-      // Standard resize respecting long edge
       const { width: targetW, height: targetH } = calculateTargetDimensions(
         origWidth,
         origHeight,
@@ -453,7 +573,6 @@ export const processImageForInstagram = async (file, options = {}) => {
       finalCanvas = compositeBackground(finalCanvas, '#ffffff');
     }
 
-    // High quality JPEG encoding with <10MB target constraint
     const maxBytes = 10 * 1024 * 1024;
     let quality = 0.94;
     let compressedBlob = await canvasToBlob(finalCanvas, 'image/jpeg', quality);
@@ -472,6 +591,7 @@ export const processImageForInstagram = async (file, options = {}) => {
 
     return {
       success: true,
+      isSplit: false,
       file: compressedBlob,
       preview,
       format: 'jpg',
@@ -491,6 +611,7 @@ export const processImageForInstagram = async (file, options = {}) => {
   } finally {
     if (sourceCanvas) { sourceCanvas.width = 0; sourceCanvas.height = 0; }
     if (finalCanvas) { finalCanvas.width = 0; finalCanvas.height = 0; }
+    if (compositeCanvas) { compositeCanvas.width = 0; compositeCanvas.height = 0; }
   }
 };
 
