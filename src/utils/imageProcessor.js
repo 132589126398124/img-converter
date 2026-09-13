@@ -7,7 +7,38 @@ const pica = new Pica({
 });
 
 const INSTAGRAM_MAX_LANDSCAPE = 1.91;
-const INSTAGRAM_MIN_PORTRAIT = 0.8; // 4:5
+const INSTAGRAM_MIN_PORTRAIT = 0.8; // 4:5 (1:1.25)
+const INSTAGRAM_RATIO_TOLERANCE = 0.015; // 1.5% tolerance to prevent floating point & pixel rounding errors
+
+/**
+ * Format portrait aspect ratio for clear user messages.
+ */
+function formatPortraitRatio(aspectRatio) {
+  const inv = 1 / aspectRatio;
+  if (Math.abs(inv - 1.5) < 0.05) {
+    return '2:3 (1:1.5)';
+  }
+  if (Math.abs(inv - (16 / 9)) < 0.05) {
+    return '9:16 (1:1.78)';
+  }
+  if (Math.abs(inv - (4 / 3)) < 0.05) {
+    return '3:4 (1:1.33)';
+  }
+  return `1:${inv.toFixed(2)}`;
+}
+
+/**
+ * Format landscape aspect ratio for clear user messages.
+ */
+function formatLandscapeRatio(aspectRatio) {
+  if (Math.abs(aspectRatio - (16 / 9)) < 0.05) {
+    return '16:9 (1.78:1)';
+  }
+  if (Math.abs(aspectRatio - 2.39) < 0.08) {
+    return '21:9 시네마틱 (2.39:1)';
+  }
+  return `${aspectRatio.toFixed(2)}:1`;
+}
 
 /**
  * Checks if the browser supports encoding to AVIF.
@@ -500,15 +531,18 @@ export const processImageForInstagram = async (file, options = {}) => {
       warning = '세로 또는 정사각형 사진은 가로 파노라마 분할 대상이 아니므로 인스타그램 최적 세로 1장으로 변환되었습니다.';
     }
 
-    if (aspectRatio > INSTAGRAM_MAX_LANDSCAPE) {
+    const isTooWideLandscape = aspectRatio > INSTAGRAM_MAX_LANDSCAPE + INSTAGRAM_RATIO_TOLERANCE;
+    const isTooTallPortrait = aspectRatio < INSTAGRAM_MIN_PORTRAIT - INSTAGRAM_RATIO_TOLERANCE;
+
+    if (isTooWideLandscape) {
       if (frameMode === 'none') {
-        warning = `화면비 ${aspectRatio.toFixed(2)}:1 — 인스타 지원 범위(최대 1.91:1) 초과. 업로드 시 좌우가 크롭됩니다.`;
+        warning = `화면비 ${formatLandscapeRatio(aspectRatio)} — 인스타 지원 범위(최대 1.91:1) 초과. 업로드 시 좌우가 크롭됩니다.`;
       } else {
         needsPadding = true;
       }
-    } else if (aspectRatio < INSTAGRAM_MIN_PORTRAIT) {
+    } else if (isTooTallPortrait) {
       if (frameMode === 'none') {
-        warning = `화면비 1:${(1 / aspectRatio).toFixed(2)} — 인스타 지원 범위(최대 4:5) 초과. 업로드 시 상하가 크롭됩니다.`;
+        warning = `화면비 ${formatPortraitRatio(aspectRatio)} — 인스타 피드 지원 범위(최대 세로 4:5 / 1:1.25) 초과. 업로드 시 상하가 크롭됩니다.`;
       } else {
         needsPadding = true;
       }
@@ -518,12 +552,12 @@ export const processImageForInstagram = async (file, options = {}) => {
       let frameW, frameH;
       let imgW, imgH;
 
-      if (aspectRatio < INSTAGRAM_MIN_PORTRAIT) {
+      if (isTooTallPortrait) {
         imgH = Math.min(origHeight, targetLongEdge);
         imgW = Math.round(imgH * aspectRatio);
         frameH = imgH;
         frameW = Math.round(frameH * INSTAGRAM_MIN_PORTRAIT);
-      } else {
+      } else if (isTooWideLandscape) {
         imgW = Math.min(origWidth, targetLongEdge);
         imgH = Math.round(imgW / aspectRatio);
         frameW = imgW;
