@@ -1,78 +1,103 @@
-# Lumina Flow 2.0 🌟
-> **초고화질 무손실 이미지 변환 & 비율 유지 장축 리사이즈 스튜디오**
+# Lumina Flow
 
-Lumina Flow는 사진 작가, 디자이너, 크리에이터를 위한 웹 기반 고성능 이미지 변환 및 리사이징 도구입니다. 브라우저 내에서 100% 로컬로 동작하여 서버 전송 없이 안전하고 빠르며, 최신 렌더링 파이프라인과 EXIF 메타데이터 보존 엔진을 탑재하여 화질 및 데이터 손실을 최소화합니다.
+사진을 외부 서버로 보내지 않고 변환·검증하는 한국어 웹 사진 스튜디오. React + Vite, Vercel 정적 배포, PC 작업 화면과 모바일 설정 시트를 사용합니다.
 
----
+## 실행
 
-## 🚀 주요 기능 (Key Features)
+Node.js 24 권장.
 
-### 1. 사진 비율 유지 장축(Long Edge) 리사이즈
-- **비율 100% 자동 유지**: 가로/세로 중 긴 변을 자동으로 감지하여 지정한 장축 길이에 맞춰 원본 화면비를 완벽하게 보존합니다.
-- **다양한 해상도 프리셋**:
-  - `원본 유지 (Original)`
-  - `4096px (Ultra / Instagram Max)`
-  - `3840px (4K UHD)`
-  - `2560px (QHD / 2K)`
-  - `2048px (Web / SNS 고화질)`
-  - `1920px (Full HD)`
-  - `1080px (모바일 최적화)`
-  - `직접 입력 (Custom px)`
-- **작은 사진 확대 방지**: 원본 사진이 지정한 장축 크기보다 작은 경우 불필요하게 업스케일링하여 화질이 흐려지는 것을 원천 차단합니다.
-
-### 2. 화질 및 데이터 손실 최소화 파이프라인
-- **Pica Lanczos3 스튜디오급 리사이징**: 단순 브라우저 `drawImage`의 계단 현상 및 모아레 왜곡을 방지하고, Lanczos3 윈도우 싱크 필터와 미세 언샵 마스크로 섬세한 디테일과 선명도를 유지합니다.
-- **EXIF 메타데이터 보존 엔진**: 카메라 모델, 렌즈 정보, 촬영 일시, 셔터스피드, 조리개, ISO 등 소중한 촬영 정보를 추출하여 변환된 JPEG 및 WebP 파일에 안전하게 주입합니다. (정방향 1:1 Orientation 자동 정규화로 회전 버그 방지)
-- **투명 배경(Alpha 채널) 스마트 매트**: 투명 PNG/WebP를 JPEG로 변환할 때 투명 영역이 검은색으로 깨지는 문제를 해결하여 깔끔한 화이트 배경으로 합성합니다.
-- **차세대 포맷 지원**: WebP, JPEG, PNG 및 브라우저 지원 시 초고압축 **AVIF** 포맷까지 완벽 지원.
-
-### 3. 세밀한 화질 / 용량 듀얼 제어
-- **화질 우선 모드 (%)**: 100% (무손실/최고), 95% (초고화질), 90% (고화질 추천), 85%, 75% 프리셋 및 1% 단위 미세 슬라이더 제공.
-- **목표 용량 모드 (MB)**: 20MB, 10MB, 5MB, 2MB, 1MB 및 직접 지정 지원 (업로드 용량 한도 맞춤).
-
-### 4. 인스타그램 최적화 모드 & 파노라마 캐러셀 분할
-- **가로사진 2장 / 3장 4:5 세로 분할 (Swipe Carousel)**:
-  - 와이드 풍경/단체 가로 사진을 인스타그램 피드 최적 규격인 **4:5 비율 세로 사진 2장 또는 3장으로 정밀 분할**.
-  - 인스타그램 업로드 시 옆으로 부드럽게 스와이프하며 끊김 없이 이어지는 **심리스 파노라마 캐러셀 게시물** 완성.
-  - **화면 꽉 채우기 (크롭)** 및 **전체 사진 보존 (여백 채우기)** 옵션 지원.
-- 기존의 느리고 품질이 낮던 `jpeg-js` 순수 소프트웨어 인코더를 완전히 제거하고 고품질 Pica 파이프라인으로 전환.
-- **비율 보호 레터박스(여백) 채우기**: 3:2 세로 사진이나 파노라마가 인스타그램의 피드 규격(4:5 또는 1.91:1)을 벗어나도 잘리지 않도록 보호:
-  - `화이트 프레임` (깔끔한 인스타 감성 흰색 여백)
-  - `블랙 프레임` (모던한 블랙 여백)
-  - `블러 배경` (사진 원본을 은은하게 블러 처리한 감성 배경)
-  - `여백 없음` (크롭 주의 경고 표시)
-
-### 5. 프리미엄 UX & 디자인
-- **전체 화면 드래그 앤 드롭**: 창 어디든 파일을 끌어다 놓아도 안전하게 추가되는 풀스크린 드롭존.
-- **비포/애프터(Before & After) 비교 뷰어**: 변환본과 원본의 해상도, 용량 절감률, EXIF 정보를 나란히 비교하고 100% 픽셀 확대로 화질 손실 유무를 직접 검증.
-- **다크 모드 & 라이트 모드**: Apple & Toss 스타일의 모던 글래스모피즘 인터페이스와 테마 토글 지원.
-- **병렬 동시 처리 & 진행률 표시**: 대량 변환 시 동시 2~3개 작업 처리로 빠른 속도 제공.
-- **ZIP 일괄 다운로드 & 파일명 설정**: 원본 이름 유지 또는 날짜_시간 접두사 선택 가능.
-
----
-
-## 🛠️ 기술 스택 (Tech Stack)
-
-- **Frontend**: React 19, Vite 8, Framer Motion
-- **Styling**: Apple Glassmorphism CSS, Pretendard
-- **Image Processing**: Pica (Lanczos3 resizer), UTIF (TIFF/DNG decoder), Heic2any (HEIC/HEIF)
-- **Metadata**: Exifr, Piexifjs (EXIF parsing & APP1 injection)
-- **Packaging**: JSZip, Lucide React
-
----
-
-## 📦 시작하기 (Getting Started)
-
-```bash
-# 의존성 설치
-npm install
-
-# 개발 서버 실행
+```sh
+npm ci
 npm run dev
-
-# 프로덕션 빌드
-npm run build
-
-# 코드 린트 검사
-npm run lint
 ```
+
+`predev` / `prebuild`가 설치된 `wasm-vips@0.0.19`의 런타임·WASM·라이선스를 `public/engine/`에 복사합니다. 해당 폴더는 생성물이며 커밋하지 않습니다. 인터넷에서 사진이나 엔진을 런타임 다운로드하지 않고 동일 출처 정적 파일만 사용합니다. 시스템 폰트를 사용하므로 외부 폰트 요청도 없습니다.
+
+```sh
+npm run lint
+npm run typecheck
+npm test
+npm run test:browser
+```
+
+로컬 브라우저 검사는 설치된 Chrome을 사용합니다. CI에서는 `npx playwright install --with-deps chromium`으로 테스트 브라우저를 설치합니다.
+
+## 사용과 품질 기준
+
+1. 사진 추가: 실제 파일 형식, 방향을 적용한 해상도, 입력 비트 깊이, ICC, 촬영정보를 확인합니다.
+2. 목적 선택: 고품질 변환 / 파일당 용량 제한 / SNS 프레임·파노라마.
+3. 미리보기: 동일 recipe의 축소 결과, 연결된 분할 경계, 사진별 크롭 위치를 확인합니다. ‘100% 인코딩 검사’는 선택한 출력 영역의 인코딩 전 픽셀과 실제 인코딩 후 픽셀을 나란히 표시합니다.
+4. 일괄 처리: 설정을 고정하고 한 장씩 처리합니다. 일시정지는 현재 사진 완료 후 멈추고, 취소는 현재 Worker를 종료합니다. 완료한 항목은 다시 요청하지 않습니다. 설정이 달라진 완료본은 이전 결과로 표시합니다.
+5. 저장: 실제 시그니처, 재디코딩, 해상도, ICC, 메타데이터, 최종 용량을 검사한 파일을 다운로드합니다. 실패한 용량 목표를 ‘완료’로 표시하지 않습니다.
+
+기본값: JPG 품질 95, sRGB, 원본 크기, 확대 방지, 추가 샤프닝 없음, 촬영정보 유지·GPS 제외. JPG/WebP의 품질 100은 무손실 보장이 아닙니다. PNG는 무손실 압축입니다. AVIF도 선택할 수 있습니다.
+
+### 색상과 정밀도
+
+- JPG, 단일 페이지 8/16비트 RGB·회색 TIFF, PNG, 정지 WebP/AVIF를 libvips로 읽습니다.
+- LittleCMS ICC import → XYZ float 작업 공간 → Lanczos3 리사이즈 → 대상 ICC 16비트 export → 8비트 양자화 → 인코딩 순서입니다. Canvas는 최종 처리 경로에 없습니다.
+- sRGB, 원본 RGB ICC, Display P3 출력을 지원합니다. 내장 ICC가 없으면 sRGB(회색은 같은 TRC의 sGrey) 가정임을 표시합니다. 명시적으로 sRGB / Adobe RGB / Display P3 입력 프로파일을 지정할 수 있습니다.
+- 손상된 ICC는 자동 처리를 실패시키며 명시적인 입력 지정으로 재처리할 수 있습니다. CMYK, 부동소수점/HDR, 다중 페이지·애니메이션 입력은 지원하지 않습니다.
+- 동일 포맷·원본 색공간·원본 크기·품질 100·정방향 조건에서는 JPEG/WebP 픽셀 데이터를 재압축하지 않고 촬영정보 컨테이너만 정리합니다.
+
+### CR3 / DNG / HEIC
+
+- **CR3와 DNG는 내장 JPEG 추출입니다. RAW 현상이 아닙니다.** 실제 추출 해상도와 출처를 UI·결과에 표시합니다.
+- CR3는 ISO-BMFF JPEG 트랙과 PRVW를 탐색하고 픽셀 면적이 가장 큰 유효 후보를 사용합니다. CMT1/2/4의 촬영정보도 읽습니다. DNG는 IFD/SubIFD의 JPEG 위치 정보를 사용하며 임의의 JPEG 마커를 카빙하지 않습니다.
+- R6 Mark III RAW/C-RAW 풀프레임·크롭 공개 샘플로 추출과 저장을 검증했습니다. 정밀 RAW 현상은 후속 범위입니다.
+- HEIC는 필요할 때만 `heic2any` 보조 디코더를 로딩합니다. **8비트 출력이며 원본 ICC·HDR 보존을 보장하지 않습니다.** 이 제한을 처리 출처와 경고에 표시합니다. 고비트·광색역 작업에는 보정한 TIFF를 사용하세요.
+
+### 메타데이터와 용량
+
+- 유지 대상: 카메라·렌즈, 노출·ISO·초점거리, 촬영일·초 단위 이하·원래 시간대, 작성자·저작권. 날짜를 UTC로 강제 변환하거나 파일 생성일을 촬영일로 사용하지 않습니다.
+- EXIF를 화이트리스트로 재구성하고 썸네일·MakerNote·기존 XMP/IPTC/주석은 복사하지 않습니다. GPS는 별도 선택입니다. EXIF ASCII에 표현할 수 없는 값 등 누락은 ‘일부 보존’으로 표시합니다.
+- 촬영정보 제거와 색상 ICC 보존은 별개입니다. JPEG 스캔 사이의 메타데이터와 종료 마커 뒤 추가 데이터도 제거합니다.
+- 목표 용량은 ICC·촬영정보를 붙인 **최종 바이트 수**입니다. 설정한 최대 품질부터 정수 품질 값을 내려가며 처음 통과한 결과를 선택합니다. 품질과 용량이 항상 단조 관계라고 가정하지 않습니다. 작고 어려운 제한은 오래 걸릴 수 있으며 취소할 수 있습니다. PNG는 한 번 인코딩해 판정합니다.
+- 설정한 크기에서 제한을 충족하지 못하면 결과를 ‘목표 미달’로 보관합니다. 해상도를 자동으로 낮추지 않습니다. UI의 MiB는 1,048,576 bytes입니다.
+
+## 구조와 보관
+
+- `src/engine`: typed Worker client, 공통 recipe/기하 규칙, libvips 엔진, 포맷·ICC·메타데이터 검증, CR3/DNG 추출.
+- `src/workspace`: 직렬 실행 큐, IndexedDB 결과 보관, 지연 읽기, ZIP Worker.
+- `src/components`: PC·모바일 설정, Blob URL 수명 관리, 동일 위치의 픽셀 비교, 연결 파노라마.
+- 내부 경계는 `inspect(file)`, `preview(asset, recipe, signal, region?)`, `run(asset, recipe, signal)`입니다. 결과에 실제 포맷·크기·검사·출처·고정 recipe·엔진 버전을 기록합니다. 원격 처리 API는 없습니다.
+
+원본 File은 IndexedDB에 저장하지 않습니다. 완료 파일의 바이트 데이터와 작은 원본 미리보기·작업 정보만 보관합니다. WebKit Blob 저장 제약을 피하도록 ArrayBuffer로 기록하고 다운로드 시 Blob으로 복원합니다. 새로고침 후 완료본을 저장할 수 있으며 미완료 작업이나 설정 변경에는 원본을 다시 선택해야 합니다. 브라우저의 저장소 삭제·자동 회수 이후 영구 복원을 보장하지 않습니다.
+
+저장 공간 부족 시 다음 작업을 멈추고 현재 결과를 메모리에 유지해 다운로드할 수 있게 합니다. 이 경우 탭을 닫으면 현재 임시 결과는 사라집니다. 목록에서 항목을 제거하면 해당 캐시도 지워지며 원본 파일은 건드리지 않습니다.
+
+ZIP은 파일명 충돌을 방지하고 결과 합계 64MiB 단위로 묶습니다. 단일 대형 파일은 분할하지 않습니다. 완성된 ZIP 링크를 각각 눌러 저장합니다. 모바일 공유는 `navigator.canShare({files})`를 검사하고 사용자 클릭에서 준비된 File을 넘깁니다.
+
+보수적인 사전 한도: 터치 기기 50MP/입력 160MiB, 일반 기기 200MP/512MiB. 여백을 포함한 출력에도 픽셀 한도를 적용합니다. 이 수치는 실제 기기 메모리를 측정한 보장치가 아닙니다. 브라우저가 백그라운드 탭을 중단할 수 있으므로 작업 중에는 탭을 열어 두세요.
+
+## 배포
+
+Vercel 설정은 `vercel.json`에 있습니다. `npm run build` → `dist/` 정적 배포이며 문서·Worker·WASM에 다음 헤더가 필요합니다.
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Resource-Policy: same-origin
+```
+
+`crossOriginIsolated`가 활성화되지 않으면 엔진을 시작하지 않습니다. Vite 개발/프리뷰 서버에도 같은 헤더를 설정했습니다. 기존 GitHub Pages 자동 게시 워크플로우는 품질 검사 CI로 교체했습니다. Pages는 이 헤더를 직접 구성하기 어려워 현재 배포 대상으로 삼지 않습니다.
+
+## 검증 자료
+
+로컬 검증의 범위와 실제 기기·출시 전 남은 항목은 [QA.md](QA.md)에 기록합니다.
+
+실제 카메라 회귀 검사는 CC0 샘플(약 70MiB)을 별도로 내려받아 실행합니다. 파일과 해시는 `tests/camera-fixtures.json`에 고정되어 있습니다. 이미지 자체는 커밋하지 않습니다.
+
+```sh
+npm run fixtures:camera
+npm run test:camera
+```
+
+참고: [wasm-vips](https://github.com/kleisauke/wasm-vips), [libvips ICC 처리](https://www.libvips.org/API/current/method.Image.icc_import.html), [CR3 구조](https://github.com/lclevy/canon_cr3), [CC0 Adobe-compatible ICC](https://github.com/saucecontrol/Compact-ICC-Profiles). 공급 라이브러리 라이선스는 생성된 엔진 폴더의 THIRD-PARTY-NOTICES와 `public/profiles/LICENSE.txt`에 포함됩니다.
+
+### 배포 주소 검사 / WebKit 검사
+
+`PLAYWRIGHT_BASE_URL`을 지정하면 로컬 서버 대신 해당 배포를 검사합니다.
+`PLAYWRIGHT_BROWSER=webkit`으로 WebKit을 선택할 수 있습니다(`npx playwright install webkit` 필요).
+Windows WebKit은 실제 iPhone Safari와 다르므로 실기기 검증은 별도입니다.
+Worker 재생성 시 일부 WebKit의 캐시 응답 격리 정책 오류를 피하기 위해 JS 자산은 `no-store`를 사용합니다. 대형 WASM 바이너리에는 이 예외를 적용하지 않습니다.

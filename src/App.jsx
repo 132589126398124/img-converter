@@ -1,1047 +1,933 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Upload,
-  Image as ImageIcon,
-  Download,
-  CheckCircle2,
-  Loader2,
-  X,
-  Settings2,
-  Trash2,
-  Play,
-  Package,
-  AlertTriangle,
+  Aperture,
+  ArrowDownToLine,
+  ArrowRight,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  CircleHelp,
+  ImagePlus,
+  LoaderCircle,
   Moon,
-  Sun,
-  Eye,
-  RefreshCw,
-  Sparkles,
-  Sliders,
+  Pause,
+  Play,
+  Settings2,
+  Share2,
   ShieldCheck,
-  Camera,
-  Maximize2,
-  Columns,
-  Layers
+  Square,
+  Sun,
+  X,
 } from 'lucide-react';
-import JSZip from 'jszip';
-import { processImage, processImageForInstagram, isAvifSupported } from './utils/imageProcessor';
-import CompareModal from './components/CompareModal';
+import { DEFAULT_RECIPE, normalizeRecipe } from './engine/recipe';
+import { preview } from './engine/client';
+import { useWorkspace } from './workspace/useWorkspace';
+import { getArtifact } from './workspace/storage';
+import {
+  downloadBlob,
+  makeArchives,
+  uniqueNames,
+  fileTimestamp,
+} from './workspace/export';
+import SettingsPanel, { PurposeButtons } from './components/SettingsPanel';
+import PhotoViewer from './components/PhotoViewer';
+import { useBlobUrl } from './components/useBlobUrl';
 import './App.css';
 
-const LONG_EDGE_PRESETS = [
-  { label: '원본 유지', value: 0 },
-  { label: '4096px (Ultra)', value: 4096 },
-  { label: '3840px (4K)', value: 3840 },
-  { label: '2560px (2K)', value: 2560 },
-  { label: '2048px (SNS)', value: 2048 },
-  { label: '1920px (FHD)', value: 1920 },
-  { label: '1080px (모바일)', value: 1080 },
-  { label: '직접 입력', value: -1 },
-];
-
-const QUALITY_PRESETS = [
-  { label: '100% (무손실/최고)', value: 100 },
-  { label: '95% (초고화질)', value: 95 },
-  { label: '90% (고화질 추천)', value: 90 },
-  { label: '85% (균형)', value: 85 },
-  { label: '75% (웹 최적화)', value: 75 },
-];
-
-const SIZE_PRESETS = [
-  { label: '원본', value: 0 },
-  { label: '20MB', value: 20 },
-  { label: '10MB', value: 10 },
-  { label: '5MB', value: 5 },
-  { label: '2MB', value: 2 },
-  { label: '1MB', value: 1 },
-];
-
-function App() {
-  const [images, setImages] = useState([]);
-  const [instagramMode, setInstagramMode] = useState(false);
-  const [format, setFormat] = useState('webp');
-  const [avifSupported, setAvifSupported] = useState(false);
-
-  // Long edge settings
-  const [targetLongEdge, setTargetLongEdge] = useState(0); // 0 = original
-  const [customLongEdge, setCustomLongEdge] = useState('1920');
-  const [preventUpscale, setPreventUpscale] = useState(true);
-
-  // Quality settings
-  const [qualityMode, setQualityMode] = useState('quality'); // 'quality' | 'size'
-  const [qualityPercent, setQualityPercent] = useState(90);
-  const [targetSizeMB, setTargetSizeMB] = useState(10);
-
-  // Advanced settings
-  const [preserveExif, setPreserveExif] = useState(true);
-  const [fileNamePrefix, setFileNamePrefix] = useState('timestamp'); // 'timestamp' | 'none'
-
-  // Instagram mode settings
-  const [instaFrameMode, setInstaFrameMode] = useState('white'); // 'none' | 'white' | 'black' | 'blur'
-  const [instaTargetLongEdge, setInstaTargetLongEdge] = useState(2160);
-  const [instaSplitMode, setInstaSplitMode] = useState('none'); // 'none' | '2' | '3'
-  const [instaSplitFit, setInstaSplitFit] = useState('crop'); // 'crop' | 'fit'
-  const [activeSliceMap, setActiveSliceMap] = useState({}); // { [imgId]: sliceIndex }
-
-  // UI state
-  const [isDragging, setIsDragging] = useState(false);
-  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
-  const [isProcessingAll, setIsProcessingAll] = useState(false);
-  const [isZipping, setIsZipping] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-  const [activeCompareImage, setActiveCompareImage] = useState(null);
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
-
-  const dragCounter = useRef(0);
-
-  // Check AVIF support
-  useEffect(() => {
-    setAvifSupported(isAvifSupported());
-  }, []);
-
-  // Theme effect
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
-  };
-
-  const handleFiles = useCallback((files) => {
-    if (!files || files.length === 0) return;
-    const incomingFiles = Array.from(files).filter(file => {
-      const name = file.name.toLowerCase();
-      return file.type.startsWith('image/') ||
-        name.endsWith('.tif') || name.endsWith('.tiff') ||
-        name.endsWith('.dng') || name.endsWith('.heic') ||
-        name.endsWith('.heif') || name.endsWith('.webp') ||
-        name.endsWith('.avif');
-    });
-
-    if (incomingFiles.length === 0) return;
-
-    setImages(prev => {
-      // Deduplicate: avoid adding identical files if they already exist in the list
-      const existingKeys = new Set(
-        prev.map(img => `${img.name}_${img.file.size}_${img.file.lastModified}`)
-      );
-
-      const uniqueNewImages = [];
-      for (const file of incomingFiles) {
-        const key = `${file.name}_${file.size}_${file.lastModified}`;
-        if (!existingKeys.has(key)) {
-          existingKeys.add(key);
-          uniqueNewImages.push({
-            id: Math.random().toString(36).substring(2, 11) + Date.now().toString(36),
-            file,
-            name: file.name,
-            status: 'pending',
-            result: null,
-            error: null,
-          });
-        }
-      }
-
-      return [...uniqueNewImages, ...prev];
-    });
-  }, []);
-
-  // Window-level Drag and Drop to prevent accidental navigation
-  useEffect(() => {
-    const handleDragEnter = (e) => {
-      e.preventDefault();
-      dragCounter.current += 1;
-      if (e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
-        setIsGlobalDragging(true);
-      }
-    };
-
-    const handleDragLeave = (e) => {
-      e.preventDefault();
-      dragCounter.current -= 1;
-      if (dragCounter.current <= 0) {
-        setIsGlobalDragging(false);
-        dragCounter.current = 0;
-      }
-    };
-
-    const handleDragOver = (e) => {
-      e.preventDefault();
-    };
-
-    const handleDrop = (e) => {
-      e.preventDefault();
-      dragCounter.current = 0;
-      setIsGlobalDragging(false);
-      setIsDragging(false);
-      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        handleFiles(e.dataTransfer.files);
-      }
-    };
-
-    window.addEventListener('dragenter', handleDragEnter);
-    window.addEventListener('dragleave', handleDragLeave);
-    window.addEventListener('dragover', handleDragOver);
-    window.addEventListener('drop', handleDrop);
-
-    return () => {
-      window.removeEventListener('dragenter', handleDragEnter);
-      window.removeEventListener('dragleave', handleDragLeave);
-      window.removeEventListener('dragover', handleDragOver);
-      window.removeEventListener('drop', handleDrop);
-    };
-  }, [handleFiles]);
-
-  const onDropZoneDrop = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-    // Files are captured globally by the window drop listener to prevent 2x duplicate additions
-  };
-
-  const effectiveLongEdge = targetLongEdge === -1 ? (parseInt(customLongEdge, 10) || 0) : targetLongEdge;
-
-  // Single image conversion helper
-  const convertSingleImage = async (img) => {
-    if (instagramMode) {
-      return await processImageForInstagram(img.file, {
-        frameMode: instaFrameMode,
-        targetLongEdge: instaTargetLongEdge,
-        preserveExif,
-        splitMode: instaSplitMode,
-        splitFit: instaSplitFit,
-      });
-    } else {
-      return await processImage(img.file, {
-        format,
-        targetLongEdge: effectiveLongEdge,
-        preventUpscale,
-        qualityMode,
-        qualityPercent,
-        maxSizeMB: targetSizeMB,
-        preserveExif,
-      });
-    }
-  };
-
-  // Concurrency Pool Batch Converter (processes 2~3 images simultaneously)
-  const startConversion = async () => {
-    const pendingImages = images.filter(img => img.status === 'pending');
-    if (pendingImages.length === 0) return;
-
-    setIsProcessingAll(true);
-    const total = pendingImages.length;
-    let completedCount = 0;
-    setProgress({ current: 0, total });
-
-    const CONCURRENCY = 2; // balanced concurrency for mobile/desktop memory
-    let currentIndex = 0;
-
-    const worker = async () => {
-      while (currentIndex < pendingImages.length) {
-        const img = pendingImages[currentIndex++];
-        if (!img) break;
-
-        setImages(prev => prev.map(i => i.id === img.id ? { ...i, status: 'working' } : i));
-
-        const result = await convertSingleImage(img);
-
-        completedCount++;
-        setProgress({ current: completedCount, total });
-
-        setImages(prev => prev.map(i => {
-          if (i.id !== img.id) return i;
-          if (i.result?.slices) {
-            i.result.slices.forEach(s => { if (s.preview) URL.revokeObjectURL(s.preview); });
-          } else if (i.result?.preview) {
-            URL.revokeObjectURL(i.result.preview);
-          }
-          return {
-            ...i,
-            status: result.success ? 'done' : 'error',
-            result: result.success ? result : null,
-            error: result.success ? null : result.error,
-          };
-        }));
-      }
-    };
-
-    const workers = Array.from({ length: Math.min(CONCURRENCY, pendingImages.length) }, () => worker());
-    await Promise.all(workers);
-
-    setIsProcessingAll(false);
-  };
-
-  // Retry individual image
-  const retryImage = async (id) => {
-    const target = images.find(img => img.id === id);
-    if (!target) return;
-
-    setImages(prev => prev.map(i => i.id === id ? { ...i, status: 'working', error: null } : i));
-    const result = await convertSingleImage(target);
-
-    setImages(prev => prev.map(i => {
-      if (i.id !== id) return i;
-      if (i.result?.slices) {
-        i.result.slices.forEach(s => { if (s.preview) URL.revokeObjectURL(s.preview); });
-      } else if (i.result?.preview) {
-        URL.revokeObjectURL(i.result.preview);
-      }
-      return {
-        ...i,
-        status: result.success ? 'done' : 'error',
-        result: result.success ? result : null,
-        error: result.success ? null : result.error,
-      };
-    }));
-  };
-
-  const removeImage = (id) => {
-    setImages(prev => {
-      const target = prev.find(img => img.id === id);
-      if (target?.result?.slices) {
-        target.result.slices.forEach(s => { if (s.preview) URL.revokeObjectURL(s.preview); });
-      } else if (target?.result?.preview) {
-        URL.revokeObjectURL(target.result.preview);
-      }
-      return prev.filter(img => img.id !== id);
-    });
-  };
-
-  const getFormattedTimestamp = () => {
-    const now = new Date();
-    const pad = (n) => n.toString().padStart(2, '0');
-    const yy = String(now.getFullYear()).slice(-2);
-    const mm = pad(now.getMonth() + 1);
-    const dd = pad(now.getDate());
-    const hh = pad(now.getHours());
-    const min = pad(now.getMinutes());
-    const sec = pad(now.getSeconds());
-    return `${yy}${mm}${dd}_${hh}${min}${sec}`;
-  };
-
-  const buildOutputFileName = (img, timestamp, sliceIndex = null) => {
-    const baseName = img.name.replace(/\.[^.]+$/, '');
-    const ext = img.result.format;
-    const prefix = fileNamePrefix === 'timestamp' ? `${timestamp || getFormattedTimestamp()}_` : '';
-    if (sliceIndex !== null) {
-      const padIdx = String(sliceIndex).padStart(2, '0');
-      return `${prefix}${baseName}_part${padIdx}.${ext}`;
-    }
-    return `${prefix}${baseName}.${ext}`;
-  };
-
-  const downloadImage = (img, specificSliceIdx = null) => {
-    if (!img.result) return;
-    if (img.result.isSplit && img.result.slices && img.result.slices.length > 1) {
-      if (specificSliceIdx !== null) {
-        const slice = img.result.slices[specificSliceIdx];
-        if (slice) {
-          const link = document.createElement('a');
-          link.href = slice.preview;
-          link.download = buildOutputFileName(img, null, slice.index);
-          link.click();
-        }
-      } else {
-        // Download all slices sequentially with small interval to prevent browser block
-        img.result.slices.forEach((slice, idx) => {
-          setTimeout(() => {
-            const link = document.createElement('a');
-            link.href = slice.preview;
-            link.download = buildOutputFileName(img, null, slice.index);
-            link.click();
-          }, idx * 180);
-        });
-      }
-    } else {
-      const link = document.createElement('a');
-      link.href = img.result.preview;
-      link.download = buildOutputFileName(img);
-      link.click();
-    }
-  };
-
-  const downloadAllAsZip = async () => {
-    const completedImages = images.filter(img => img.status === 'done');
-    if (completedImages.length === 0) return;
-
-    setIsZipping(true);
-    const zip = new JSZip();
-    const batchTimestamp = getFormattedTimestamp();
-
-    for (const img of completedImages) {
-      if (img.result?.isSplit && img.result.slices && img.result.slices.length > 1) {
-        img.result.slices.forEach(slice => {
-          const fileName = buildOutputFileName(img, batchTimestamp, slice.index);
-          zip.file(fileName, slice.file);
-        });
-      } else {
-        const fileName = buildOutputFileName(img, batchTimestamp);
-        zip.file(fileName, img.result.file);
-      }
-    }
-
-    const content = await zip.generateAsync({ type: 'blob' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(content);
-    link.download = `lumina_converted_${batchTimestamp}.zip`;
-    link.click();
-    setIsZipping(false);
-  };
-
-  const clearAll = () => {
-    setImages(prev => {
-      prev.forEach(img => {
-        if (img?.result?.slices) {
-          img.result.slices.forEach(s => { if (s.preview) URL.revokeObjectURL(s.preview); });
-        } else if (img?.result?.preview) {
-          URL.revokeObjectURL(img.result.preview);
-        }
-      });
-      return [];
-    });
-  };
-
+const STATUS = {
+  inspecting: '사진 확인 중',
+  ready: '준비됨',
+  working: '변환·검증 중',
+  done: '검증 완료',
+  unmet: '목표 미달',
+  error: '처리 실패',
+  missing: '원본 재선택 필요',
+  cancelled: '취소됨',
+};
+const META = {
+  verified: '촬영정보 확인됨',
+  partial: '일부 보존',
+  none: '촬영정보 없음',
+  stripped: '촬영정보 제거됨',
+};
+const sizeLabel = (bytes) =>
+  bytes < 1048576
+    ? `${(bytes / 1024).toFixed(0)} KB`
+    : `${(bytes / 1048576).toFixed(2)} MB`;
+function readPreference(key, fallback) {
+  try {
+    return JSON.parse(localStorage.getItem(key)) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+function Thumb({ task }) {
+  const url = useBlobUrl(task.asset?.thumbnail);
   return (
-    <div className="app-container">
-      {/* Global Drag Overlay */}
-      <AnimatePresence>
-        {isGlobalDragging && (
-          <motion.div
-            className="global-drag-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <div className="drag-backdrop-card glass">
-              <Upload size={48} className="text-accent animate-bounce" />
-              <h2>어디든 사진을 놓으세요!</h2>
-              <p>JPG, PNG, WebP, AVIF, TIFF, HEIC, DNG 등 모든 포맷 지원</p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Header */}
-      <header className="header">
-        <div className="header-top-row">
-          <div className="logo-badge">Lumina Flow 2.0</div>
-          <button className="theme-toggle-btn" onClick={toggleTheme} title="테마 변경">
-            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-        </div>
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7 }}
-        >
-          <h1>이미지의 흐름을<br />더 선명하고 가볍게</h1>
-          <p>손실 없는 초고화질 리사이징 & 메타데이터 보존 스튜디오</p>
-        </motion.div>
-      </header>
-
-      {/* Main Area */}
-      <motion.div
-        className="main-area"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15, duration: 0.6 }}
-      >
-        {/* Dropzone */}
-        <div
-          className={`dropzone glass ${isDragging ? 'active' : ''}`}
-          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={onDropZoneDrop}
-          onClick={() => document.getElementById('fileInput').click()}
-        >
-          <input
-            type="file"
-            id="fileInput"
-            multiple
-            hidden
-            accept="image/*,.tif,.tiff,.heic,.heif,.dng,.avif"
-            onChange={(e) => {
-              handleFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          <div className="dropzone-content">
-            <div className="icon-wrapper">
-              <Upload size={32} />
-            </div>
-            <h2>사진을 여기에 드래그하거나 클릭하여 추가</h2>
-            <p>JPG, PNG, WebP, AVIF, TIFF, HEIC, DNG 지원 • 여러 장 동시 선택 가능</p>
-          </div>
-        </div>
-
-        {/* Settings Panel */}
-        <div className="settings-panel glass">
-          <div className="settings-header">
-            <div className="settings-title">
-              <Settings2 size={18} />
-              <span>변환 설정</span>
-            </div>
-            <div className="mode-selector">
-              <button
-                className={`mode-btn ${!instagramMode ? 'active' : ''}`}
-                onClick={() => setInstagramMode(false)}
-              >
-                <Sparkles size={14} /> 기본 변환
-              </button>
-              <button
-                className={`mode-btn ${instagramMode ? 'active' : ''}`}
-                onClick={() => setInstagramMode(true)}
-              >
-                <Camera size={14} /> 인스타그램 최적화
-              </button>
-            </div>
-          </div>
-
-          {!instagramMode ? (
-            <div className="settings-sections">
-              {/* Feature 2: Long Edge Resizing */}
-              <div className="setting-card">
-                <div className="card-heading">
-                  <div className="heading-left">
-                    <Maximize2 size={16} className="text-accent" />
-                    <label>장축(Long Edge) 기준 리사이즈</label>
-                  </div>
-                  <span className="heading-tip">가로/세로 비율 100% 자동 유지</span>
-                </div>
-
-                <div className="preset-chip-group">
-                  {LONG_EDGE_PRESETS.map(preset => (
-                    <button
-                      key={preset.value}
-                      className={`chip-btn ${targetLongEdge === preset.value ? 'active' : ''}`}
-                      onClick={() => setTargetLongEdge(preset.value)}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-
-                {targetLongEdge === -1 && (
-                  <div className="custom-input-row">
-                    <span className="custom-label">장축 길이 직접 지정:</span>
-                    <div className="custom-input-wrap">
-                      <input
-                        type="number"
-                        min="100"
-                        max="16384"
-                        value={customLongEdge}
-                        onChange={(e) => setCustomLongEdge(e.target.value)}
-                        placeholder="예: 1920"
-                      />
-                      <span className="input-unit">px</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="checkbox-row">
-                  <label className="custom-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={preventUpscale}
-                      onChange={(e) => setPreventUpscale(e.target.checked)}
-                    />
-                    <span>작은 사진 확대 방지 (원본이 지정 크기보다 작으면 화질 유지를 위해 확대하지 않음)</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Format & Quality Control */}
-              <div className="settings-grid">
-                {/* Target Format */}
-                <div className="setting-box">
-                  <label>목표 포맷</label>
-                  <div className="format-selector">
-                    <button
-                      className={`format-btn ${format === 'webp' ? 'active' : ''}`}
-                      onClick={() => setFormat('webp')}
-                    >
-                      <strong>WebP</strong>
-                      <small>추천 • 고압축</small>
-                    </button>
-                    <button
-                      className={`format-btn ${format === 'jpg' ? 'active' : ''}`}
-                      onClick={() => setFormat('jpg')}
-                    >
-                      <strong>JPEG</strong>
-                      <small>호환성 최고</small>
-                    </button>
-                    <button
-                      className={`format-btn ${format === 'png' ? 'active' : ''}`}
-                      onClick={() => setFormat('png')}
-                    >
-                      <strong>PNG</strong>
-                      <small>무손실 • 투명</small>
-                    </button>
-                    {avifSupported && (
-                      <button
-                        className={`format-btn ${format === 'avif' ? 'active' : ''}`}
-                        onClick={() => setFormat('avif')}
-                      >
-                        <strong>AVIF</strong>
-                        <small>차세대 규격</small>
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Quality / Target Size */}
-                <div className="setting-box">
-                  <div className="quality-mode-toggle">
-                    <label>화질 및 압축 설정</label>
-                    <div className="toggle-tabs">
-                      <button
-                        className={`toggle-tab ${qualityMode === 'quality' ? 'active' : ''}`}
-                        onClick={() => setQualityMode('quality')}
-                      >
-                        화질 기준 (%)
-                      </button>
-                      <button
-                        className={`toggle-tab ${qualityMode === 'size' ? 'active' : ''}`}
-                        onClick={() => setQualityMode('size')}
-                      >
-                        목표 용량 (MB)
-                      </button>
-                    </div>
-                  </div>
-
-                  {qualityMode === 'quality' ? (
-                    <div className="quality-controls">
-                      <div className="slider-row">
-                        <input
-                          type="range"
-                          min="50"
-                          max="100"
-                          step="1"
-                          value={qualityPercent}
-                          onChange={(e) => setQualityPercent(Number(e.target.value))}
-                          disabled={format === 'png'}
-                        />
-                        <span className="slider-val">
-                          {format === 'png' ? '무손실' : `${qualityPercent}%`}
-                        </span>
-                      </div>
-                      <div className="size-selector">
-                        {QUALITY_PRESETS.map(opt => (
-                          <button
-                            key={opt.value}
-                            className={`size-btn ${qualityPercent === opt.value ? 'active' : ''}`}
-                            onClick={() => setQualityPercent(opt.value)}
-                            disabled={format === 'png'}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="size-controls">
-                      <div className="size-selector">
-                        {SIZE_PRESETS.map(opt => (
-                          <button
-                            key={opt.value}
-                            className={`size-btn ${targetSizeMB === opt.value ? 'active' : ''}`}
-                            onClick={() => setTargetSizeMB(opt.value)}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                      <small className="setting-desc">목표 용량 이내로 사진의 픽셀 손상을 최소화하여 압축합니다.</small>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Advanced Options Bar */}
-              <div className="advanced-options-bar">
-                <label className="custom-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={preserveExif}
-                    onChange={(e) => setPreserveExif(e.target.checked)}
-                  />
-                  <ShieldCheck size={16} className="text-success" />
-                  <span>EXIF 촬영 메타데이터 보존 (카메라, 렌즈, 촬영일시, 노출 설정 유지)</span>
-                </label>
-
-                <div className="file-name-setting">
-                  <span>저장 파일명:</span>
-                  <button
-                    className={`mini-pill ${fileNamePrefix === 'none' ? 'active' : ''}`}
-                    onClick={() => setFileNamePrefix('none')}
-                  >
-                    원본 이름 유지
-                  </button>
-                  <button
-                    className={`mini-pill ${fileNamePrefix === 'timestamp' ? 'active' : ''}`}
-                    onClick={() => setFileNamePrefix('timestamp')}
-                  >
-                    날짜_시간 접두사
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* Instagram Mode Settings */
-            <div className="instagram-settings-area">
-              <div className="insta-hero-card">
-                <div className="insta-hero-info">
-                  <h4>인스타그램 고화질 최적화 모드</h4>
-                  <p>화질 저하가 심했던 기존 소프트웨어 인코더를 완전히 제거하고, Lanczos3 고성능 파이프라인으로 최대 10MB 고화질 JPEG 변환 및 EXIF를 보존합니다.</p>
-                </div>
-              </div>
-
-              <div className="insta-options-grid">
-                {/* Panorama Carousel Slicing Section */}
-                <div className="setting-card">
-                  <div className="card-heading">
-                    <div className="heading-left">
-                      <Columns size={16} className="text-accent" />
-                      <label>가로사진 파노라마 캐러셀 분할 (Carousel Split)</label>
-                    </div>
-                    <span className="heading-tip">가로 사진 → 4:5 세로 2장 또는 3장 분할</span>
-                  </div>
-
-                  <div className="preset-chip-group">
-                    <button
-                      className={`chip-btn ${instaSplitMode === 'none' ? 'active' : ''}`}
-                      onClick={() => setInstaSplitMode('none')}
-                    >
-                      분할 안함 (1장)
-                    </button>
-                    <button
-                      className={`chip-btn ${instaSplitMode === '2' ? 'active' : ''}`}
-                      onClick={() => setInstaSplitMode('2')}
-                    >
-                      2장 쪼개기 (2분할 4:5)
-                    </button>
-                    <button
-                      className={`chip-btn ${instaSplitMode === '3' ? 'active' : ''}`}
-                      onClick={() => setInstaSplitMode('3')}
-                    >
-                      3장 쪼개기 (3분할 4:5)
-                    </button>
-                  </div>
-
-                  {instaSplitMode !== 'none' && (
-                    <div className="split-fit-selector">
-                      <span className="split-fit-label">분할 맞춤 방식:</span>
-                      <button
-                        className={`mini-pill ${instaSplitFit === 'crop' ? 'active' : ''}`}
-                        onClick={() => setInstaSplitFit('crop')}
-                      >
-                        화면 꽉 채우기 (여백 없이 크롭)
-                      </button>
-                      <button
-                        className={`mini-pill ${instaSplitFit === 'fit' ? 'active' : ''}`}
-                        onClick={() => setInstaSplitFit('fit')}
-                      >
-                        전체 사진 보존 (여백 채우기)
-                      </button>
-                    </div>
-                  )}
-
-                  <small className="setting-desc">
-                    와이드 가로 사진을 인스타그램 피드에서 좌우로 자연스럽게 스와이프하며 이어지는 4:5 세로 규격으로 정밀 분할합니다.
-                  </small>
-                </div>
-
-                <div className="setting-box">
-                  <label>인스타그램 세로 사진 장축(높이) 해상도</label>
-                  <div className="preset-chip-group">
-                    <button
-                      className={`chip-btn ${instaTargetLongEdge === 2160 ? 'active' : ''}`}
-                      onClick={() => setInstaTargetLongEdge(2160)}
-                    >
-                      2160px (고화질 추천)
-                    </button>
-                    <button
-                      className={`chip-btn ${instaTargetLongEdge === 1350 ? 'active' : ''}`}
-                      onClick={() => setInstaTargetLongEdge(1350)}
-                    >
-                      1350px (인스타 표준 4:5)
-                    </button>
-                    <button
-                      className={`chip-btn ${instaTargetLongEdge === 4096 ? 'active' : ''}`}
-                      onClick={() => setInstaTargetLongEdge(4096)}
-                    >
-                      4096px (인스타 최대 한도)
-                    </button>
-                  </div>
-                </div>
-
-                <div className="setting-box">
-                  <label>
-                    {instaSplitMode !== 'none' && instaSplitFit === 'fit'
-                      ? '분할 테두리 여백 프레임 스타일'
-                      : '비율 초과 시 무손실 레터박스(여백) 채우기'}
-                  </label>
-                  <div className="preset-chip-group">
-                    <button
-                      className={`chip-btn ${instaFrameMode === 'white' ? 'active' : ''}`}
-                      onClick={() => setInstaFrameMode('white')}
-                    >
-                      화이트 프레임 (깔끔)
-                    </button>
-                    <button
-                      className={`chip-btn ${instaFrameMode === 'black' ? 'active' : ''}`}
-                      onClick={() => setInstaFrameMode('black')}
-                    >
-                      블랙 프레임 (모던)
-                    </button>
-                    <button
-                      className={`chip-btn ${instaFrameMode === 'blur' ? 'active' : ''}`}
-                      onClick={() => setInstaFrameMode('blur')}
-                    >
-                      블러 배경 (감성 프레임)
-                    </button>
-                    <button
-                      className={`chip-btn ${instaFrameMode === 'none' ? 'active' : ''}`}
-                      onClick={() => setInstaFrameMode('none')}
-                    >
-                      여백 없음 (크롭 경고)
-                    </button>
-                  </div>
-                  <small className="setting-desc">
-                    사진이 인스타 규격을 벗어나도 잘리지 않도록 테두리 여백을 채워 완벽한 구도를 유지합니다.
-                  </small>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Start Conversion Button & Progress */}
-          {images.some(img => img.status === 'pending') && (
-            <div className="action-row">
-              <button
-                className="convert-main-btn"
-                onClick={startConversion}
-                disabled={isProcessingAll}
-              >
-                {isProcessingAll ? (
-                  <>
-                    <Loader2 className="animate-spin" size={20} />
-                    <span>변환 진행 중 ({progress.current} / {progress.total})</span>
-                  </>
-                ) : (
-                  <>
-                    <Play size={20} fill="currentColor" />
-                    <span>
-                      {images.filter(i => i.status === 'pending').length}장 사진 고화질 변환 시작하기
-                    </span>
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
-          {isProcessingAll && progress.total > 0 && (
-            <div className="progress-bar-wrap">
-              <div
-                className="progress-bar-fill"
-                style={{ width: `${(progress.current / progress.total) * 100}%` }}
-              />
-            </div>
-          )}
-        </div>
-      </motion.div>
-
-      {/* Results Section */}
-      <div className="results-container">
-        <div className="results-header">
-          <div className="results-title-wrap">
-            <h3>작업 목록</h3>
-            <span className="badge-counter">{images.length}장</span>
-            {images.some(i => i.status === 'done') && (
-              <span className="badge-done">
-                {images.filter(i => i.status === 'done').length}장 완료
-              </span>
-            )}
-          </div>
-          <div className="header-actions">
-            {images.length > 0 && (
-              <>
-                <button className="clear-btn" onClick={clearAll} disabled={isProcessingAll}>
-                  <Trash2 size={16} /> 목록 비우기
-                </button>
-                {images.some(img => img.status === 'done') && (
-                  <button className="download-all-btn" onClick={downloadAllAsZip} disabled={isZipping}>
-                    {isZipping ? (
-                      <><Loader2 className="animate-spin" size={16} /> 압축 중...</>
-                    ) : (
-                      <><Package size={16} /> 모든 결과 ZIP 다운로드</>
-                    )}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Image Grid */}
-        <div className="image-grid">
-          <AnimatePresence mode="popLayout">
-            {images.map((img) => (
-              <motion.div
-                key={img.id}
-                layout
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.85, y: 10 }}
-                className={`image-card glass ${img.status === 'done' ? 'card-done' : ''} ${img.status === 'error' ? 'card-error' : ''}`}
-              >
-                <div
-                  className="card-preview"
-                  onClick={() => img.result && setActiveCompareImage(img)}
-                  title={img.result ? "클릭하여 비포/애프터 화질 비교" : ""}
-                >
-                  {img.result ? (
-                    <img
-                      src={
-                        img.result.isSplit && img.result.slices
-                          ? (img.result.slices[activeSliceMap[img.id] || 0]?.preview || img.result.preview)
-                          : img.result.preview
-                      }
-                      alt="preview"
-                    />
-                  ) : (
-                    <div className="placeholder-icon">
-                      <ImageIcon size={32} />
-                    </div>
-                  )}
-
-                  {img.result?.isSplit && img.result.slices && (
-                    <div className="card-slice-tabs" onClick={(e) => e.stopPropagation()}>
-                      {img.result.slices.map((slice, idx) => (
-                        <button
-                          key={slice.index}
-                          className={`card-slice-tab ${(activeSliceMap[img.id] || 0) === idx ? 'active' : ''}`}
-                          onClick={() => setActiveSliceMap(prev => ({ ...prev, [img.id]: idx }))}
-                        >
-                          {slice.index}/{img.result.splitCount}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {img.status === 'working' && (
-                    <div className="processing-overlay">
-                      <Loader2 className="animate-spin" size={28} />
-                      <span>고화질 처리 중...</span>
-                    </div>
-                  )}
-
-                  {img.status === 'done' && (
-                    <button
-                      className="card-inspect-badge"
-                      onClick={(e) => { e.stopPropagation(); setActiveCompareImage(img); }}
-                      title="화질 & 상세 비교"
-                    >
-                      <Eye size={14} /> 비교 보기
-                    </button>
-                  )}
-                </div>
-
-                <div className="card-body">
-                  <div className="card-title">
-                    <h4 title={img.name}>{img.name}</h4>
-                    {img.status !== 'working' && (
-                      <button className="item-remove-btn" onClick={() => removeImage(img.id)} title="항목 삭제">
-                        <X size={15} />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Resolution & Size Specs */}
-                  <div className="card-meta">
-                    {img.result ? (
-                      <div className="meta-row">
-                        <span className="res-badge">
-                          {img.result.isSplit ? `각 ${img.result.outputWidth} × ${img.result.outputHeight} px` : `${img.result.outputWidth} × ${img.result.outputHeight} px`}
-                        </span>
-                        <span className="format-tag">
-                          {img.result.isSplit ? `4:5 세로 ${img.result.splitCount}분할` : img.result.format.toUpperCase()}
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="meta-row">
-                        <span className="size-txt">{(img.file.size / 1024 / 1024).toFixed(2)} MB</span>
-                        <span className="status-pill pending">대기 중</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Footer status & Actions */}
-                  <div className="card-footer">
-                    <div className="card-info">
-                      {img.status === 'done' ? (() => {
-                        const ratio = parseFloat(img.result.ratio);
-                        return (
-                          <div className="success-tag">
-                            <CheckCircle2 size={13} />
-                            <span>
-                              {ratio >= 0 ? `${ratio}% 절감` : `${Math.abs(ratio)}% 증가`}
-                              {' '}({(img.result.compressedSize / 1024 / 1024).toFixed(2)} MB)
-                            </span>
-                          </div>
-                        );
-                      })() : img.status === 'working' ? (
-                        <span className="working-txt">고성능 리사이징...</span>
-                      ) : img.status === 'error' ? (
-                        <span className="error-txt" title={img.error}>
-                          변환 실패: {img.error}
-                        </span>
-                      ) : (
-                        <span className="ready-txt">변환 대기</span>
-                      )}
-                    </div>
-
-                    <div className="card-actions">
-                      {img.status === 'error' && (
-                        <button className="retry-btn" onClick={() => retryImage(img.id)} title="재시도">
-                          <RefreshCw size={14} /> 재시도
-                        </button>
-                      )}
-                      {img.status === 'done' && (
-                        <button className="individual-save-btn" onClick={() => downloadImage(img)}>
-                          <Download size={14} /> {img.result?.isSplit ? `분할본 ${img.result.splitCount}장 저장` : '저장'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Warning tag if present */}
-                  {img.result?.warning && (
-                    <div className="warning-tag">
-                      <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 2 }} />
-                      <span>{img.result.warning}</span>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-      </div>
-
-      {/* Compare Modal */}
-      {activeCompareImage && (
-        <CompareModal
-          image={activeCompareImage}
-          onClose={() => setActiveCompareImage(null)}
-          onDownload={downloadImage}
-        />
+    <div className="thumb">
+      {url ? (
+        <img src={url} alt="" />
+      ) : task.status === 'inspecting' ? (
+        <LoaderCircle className="spin" size={20} />
+      ) : (
+        <Aperture size={24} />
       )}
     </div>
   );
 }
+function ArchiveLink({ archive }) {
+  const url = useBlobUrl(archive.blob);
+  return (
+    <a
+      className="button secondary"
+      href={url || undefined}
+      download={archive.name}
+    >
+      <ArrowDownToLine size={16} />
+      {archive.name} · {sizeLabel(archive.blob.size)}
+    </a>
+  );
+}
 
-export default App;
+export default function App() {
+  const workspace = useWorkspace();
+  const { tasks, ready, running, checking, paused, notice, setNotice } =
+    workspace;
+  const [recipe, setRecipe] = useState(() => {
+    try {
+      return normalizeRecipe(readPreference('lumina.recipe', DEFAULT_RECIPE));
+    } catch {
+      return DEFAULT_RECIPE;
+    }
+  });
+  const [theme, setTheme] = useState(() =>
+    readPreference(
+      'lumina.theme',
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light',
+    ),
+  );
+  const [selectedId, setSelectedId] = useState(null),
+    [step, setStep] = useState('files'),
+    [settingsOpen, setSettingsOpen] = useState(false);
+  const [dragging, setDragging] = useState(false),
+    [draft, setDraft] = useState(null),
+    [draftBusy, setDraftBusy] = useState(false),
+    [draftError, setDraftError] = useState('');
+  const [resultFiles, setResultFiles] = useState([]),
+    [slice, setSlice] = useState(0),
+    [requestedView, setView] = useState('draft');
+  const [zipping, setZipping] = useState(false),
+    [zipProgress, setZipProgress] = useState(0),
+    [archives, setArchives] = useState([]),
+    [timestamp, setTimestamp] = useState(false);
+  const input = useRef(),
+    dragCount = useRef(0);
+  const selected = tasks.find((t) => t.id === selectedId) || tasks[0];
+  const view = !selected?.file && selected?.result ? 'result' : requestedView;
+  const selectedRecipe = normalizeRecipe({ ...recipe, ...selected?.crop });
+  const recipeKey = JSON.stringify(selectedRecipe);
+  const done = tasks.filter((t) => t.result);
+  const eligible = tasks.filter(
+    (t) =>
+      t.file &&
+      t.asset &&
+      (!t.result ||
+        JSON.stringify(t.result.recipe) !==
+          JSON.stringify(normalizeRecipe({ ...recipe, ...t.crop }))),
+  );
+  const locked = running || checking;
+  const patchRecipe = (patch) => {
+    setRecipe((prev) => normalizeRecipe({ ...prev, ...patch }));
+    setView('draft');
+  };
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem('lumina.theme', JSON.stringify(theme));
+    } catch {
+      /* Optional preference. */
+    }
+  }, [theme]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('lumina.recipe', JSON.stringify(recipe));
+    } catch {
+      /* Optional preference. */
+    }
+  }, [recipe]);
+  useEffect(() => {
+    const prevent = (e) => e.preventDefault();
+    const enter = (e) => {
+      e.preventDefault();
+      if (e.dataTransfer?.types.includes('Files')) {
+        dragCount.current++;
+        setDragging(true);
+      }
+    };
+    const leave = (e) => {
+      e.preventDefault();
+      dragCount.current--;
+      if (dragCount.current <= 0) setDragging(false);
+    };
+    const drop = (e) => {
+      e.preventDefault();
+      dragCount.current = 0;
+      setDragging(false);
+      if (!locked) workspace.addFiles(e.dataTransfer.files);
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('dragover', prevent);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('dragover', prevent);
+      window.removeEventListener('drop', drop);
+    };
+  });
+  useEffect(() => {
+    const abort = new AbortController();
+    let active = true;
+    setDraft(null);
+    setDraftError('');
+    setDraftBusy(false);
+    if (!selected?.file || !selected.asset || locked)
+      return () => abort.abort();
+    const timer = setTimeout(() => {
+      setDraftBusy(true);
+      preview(selected, JSON.parse(recipeKey), abort.signal)
+        .then((result) => {
+          if (active) setDraft(result);
+        })
+        .catch((error) => {
+          if (active && error.name !== 'AbortError')
+            setDraftError(error.message);
+        })
+        .finally(() => {
+          if (active) setDraftBusy(false);
+        });
+    }, 400);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [selected, recipeKey, locked]);
+  useEffect(() => {
+    let active = true;
+    setResultFiles([]);
+    setSlice(0);
+    if (!selected?.result) return;
+    const named = uniqueNames(
+      selected.result.artifacts.map((a, i, all) => ({
+        ...a,
+        name: selected.name,
+        part: all.length > 1 ? i + 1 : null,
+      })),
+    );
+    Promise.all(
+      named.map(
+        async (item) =>
+          new File([await getArtifact(item.key)], item.outputName, {
+            type: `image/${item.format === 'jpg' ? 'jpeg' : item.format}`,
+          }),
+      ),
+    )
+      .then((files) => {
+        if (active) setResultFiles(files);
+      })
+      .catch((e) => {
+        if (active) setNotice(e.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selected?.id, selected?.result, selected?.name, setNotice]);
+  const activeBlob =
+    view === 'result' && resultFiles[slice]
+      ? resultFiles[slice]
+      : draft?.artifacts[slice]?.blob ||
+        draft?.artifacts[0]?.blob ||
+        selected?.asset?.thumbnail;
+  const displayedCount =
+    view === 'result' ? resultFiles.length : draft?.artifacts.length || 1;
+  const selectedStale =
+    selected?.result && JSON.stringify(selected.result.recipe) !== recipeKey;
+  let canShare = false;
+  try {
+    canShare =
+      resultFiles.length > 0 && !!navigator.canShare?.({ files: resultFiles });
+  } catch {
+    /* Downloads remain available. */
+  }
+  const process = async (ids) => {
+    setView('result');
+    setStep('results');
+    setSettingsOpen(false);
+    await workspace.start(recipe, ids);
+  };
+  const share = () =>
+    navigator.share({ files: resultFiles }).catch((e) => {
+      if (e.name !== 'AbortError')
+        setNotice(`공유하지 못했습니다: ${e.message}`);
+    });
+  const exportZip = async () => {
+    setZipping(true);
+    setArchives([]);
+    try {
+      setArchives(
+        await makeArchives(
+          done,
+          timestamp ? `${fileTimestamp()}_` : '',
+          setZipProgress,
+        ),
+      );
+    } catch (e) {
+      setNotice(e.message);
+    } finally {
+      setZipping(false);
+    }
+  };
+
+  return (
+    <div className="app-shell">
+      <input
+        ref={input}
+        id="file-input"
+        type="file"
+        multiple
+        hidden
+        accept="image/jpeg,image/png,image/webp,image/avif,image/tiff,image/heic,image/heif,.tif,.tiff,.heic,.heif,.cr3,.dng"
+        onChange={(e) => {
+          workspace.addFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      <header className="topbar">
+        <a className="brand" href="#">
+          <span className="brand-mark">
+            <Aperture size={26} strokeWidth={1.4} />
+          </span>
+          <span>
+            Lumina<span className="brand-light"> Flow</span>
+            <small>LOCAL PHOTO STUDIO</small>
+          </span>
+        </a>
+        <div className="header-right">
+          <span className="local-pill">
+            <span />
+            사진은 이 기기에만
+          </span>
+          <button
+            className="icon-button"
+            aria-label="테마 변경"
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          >
+            {theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}
+          </button>
+        </div>
+      </header>
+      <div className="intro-row">
+        <div>
+          <span className="eyebrow">사진 추가부터 저장까지, 한곳에서</span>
+          <h1>사진은 그대로, 쓰임은 새롭게.</h1>
+          <p>색은 정확하게, 디테일은 섬세하게. 저장되는 결과까지 확인하세요.</p>
+        </div>
+        <div className="intro-note">
+          <ShieldCheck size={23} />
+          <span>
+            고정밀 색상 처리
+            <br />
+            <strong>16-bit input · ICC managed</strong>
+          </span>
+        </div>
+      </div>
+      {!globalThis.crossOriginIsolated && (
+        <div className="notice warning" role="alert">
+          고정밀 엔진을 위한 격리 환경이 활성화되지 않았습니다. HTTPS와
+          COOP/COEP 헤더가 필요합니다.
+        </div>
+      )}
+      {notice && (
+        <div className="notice" role="status">
+          <CircleHelp size={18} />
+          <span>{notice}</span>
+          <button
+            aria-label="알림 닫기"
+            className="icon-button"
+            onClick={() => setNotice('')}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      <nav className="mobile-steps" aria-label="작업 단계">
+        {[
+          ['files', '01', '사진'],
+          ['settings', '02', '설정·미리보기'],
+          ['results', '03', '결과'],
+        ].map(([key, n, label]) => (
+          <button
+            key={key}
+            className={step === key ? 'active' : ''}
+            onClick={() => setStep(key)}
+          >
+            <small>{n}</small>
+            {label}
+          </button>
+        ))}
+      </nav>
+      <main className="studio" data-step={step}>
+        <aside className="photo-rail">
+          <div className="panel-title">
+            <h2>
+              사진 목록 <span>{tasks.length.toString().padStart(2, '0')}</span>
+            </h2>
+            <button
+              className="icon-button"
+              aria-label="사진 추가"
+              disabled={!ready || locked}
+              onClick={() => input.current.click()}
+            >
+              <ImagePlus size={19} />
+            </button>
+          </div>
+          <button
+            className="add-zone"
+            disabled={!ready || locked}
+            onClick={() => input.current.click()}
+          >
+            <ImagePlus size={23} />
+            <strong>
+              {checking ? '사진을 확인하고 있어요' : '사진 추가하기'}
+            </strong>
+            <span>끌어놓기 또는 파일 선택</span>
+            <small>JPG · TIFF · HEIC · CR3 · DNG</small>
+          </button>
+          {!tasks.length ? (
+            <div className="rail-empty">
+              <span>01 / IMPORT</span>
+              <p>
+                한 장부터 한 묶음까지.
+                <br />
+                원본은 그대로 보관됩니다.
+              </p>
+            </div>
+          ) : (
+            <div className="photo-list" aria-label="추가한 사진">
+              {tasks.map((task, i) => (
+                <div
+                  key={task.id}
+                  className={`photo-item ${task.id === selected?.id ? 'selected' : ''}`}
+                >
+                  <button
+                    className="photo-select"
+                    onClick={() => {
+                      setSelectedId(task.id);
+                      setSlice(0);
+                      setView(task.result ? 'result' : 'draft');
+                      if (step === 'files') setStep('settings');
+                    }}
+                    aria-label={`${task.name} 선택`}
+                  >
+                    <Thumb task={task} />
+                    <span className="photo-label">
+                      <strong>{task.name}</strong>
+                      <span>
+                        {task.asset
+                          ? `${task.asset.width} × ${task.asset.height} · ${task.asset.bits}-bit`
+                          : sizeLabel(task.size)}
+                      </span>
+                      <small className={`status status-${task.status}`}>
+                        {task.status === 'working' ||
+                        task.status === 'inspecting' ? (
+                          <LoaderCircle size={11} className="spin" />
+                        ) : task.result ? (
+                          <Check size={11} />
+                        ) : (
+                          <span className="status-dot" />
+                        )}
+                        {STATUS[task.status]}
+                      </small>
+                    </span>
+                    <span className="item-number">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                  </button>
+                  <button
+                    className="remove-item icon-button"
+                    aria-label={`${task.name} 목록에서 제거`}
+                    disabled={locked}
+                    onClick={() => workspace.remove(task.id)}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="rail-footer">
+            <span>{done.length}장 결과 보관 중</span>
+            {done.length > 0 && (
+              <button
+                className="text-button"
+                disabled={zipping}
+                onClick={exportZip}
+              >
+                {zipping ? `${zipProgress}%` : 'ZIP 만들기'}
+                <ArrowDownToLine size={14} />
+              </button>
+            )}
+          </div>
+        </aside>
+        <section className="stage">
+          <div className="stage-toolbar">
+            <div>
+              <span className="eyebrow">
+                {view === 'result' && selected?.result
+                  ? 'VERIFIED OUTPUT'
+                  : 'LIVE PREVIEW'}
+              </span>
+              <h2>{selected ? selected.name : '사진을 위한 작업 공간'}</h2>
+            </div>
+            <button
+              className="mobile-settings button secondary"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Settings2 size={15} />
+              설정
+            </button>
+          </div>
+          <div className="mobile-purpose">
+            <PurposeButtons
+              purpose={recipe.purpose}
+              disabled={locked}
+              onChange={(purpose) => patchRecipe({ purpose })}
+            />
+          </div>
+          {selected ? (
+            <>
+              <div className="viewer-tabs">
+                <button
+                  disabled={!selected.file}
+                  className={view === 'draft' ? 'active' : ''}
+                  onClick={() => {
+                    setView('draft');
+                    setSlice(0);
+                  }}
+                >
+                  작업 미리보기
+                </button>
+                <button
+                  disabled={!selected.result}
+                  className={view === 'result' ? 'active' : ''}
+                  onClick={() => {
+                    setView('result');
+                    setSlice(0);
+                  }}
+                >
+                  저장 파일 {selectedStale && <span className="tiny-dot" />}
+                </button>
+                <span>
+                  {view === 'draft'
+                    ? '축소 미리보기'
+                    : selectedStale
+                      ? '이전 설정 결과'
+                      : '실제 인코딩 결과'}
+                </span>
+              </div>
+              <PhotoViewer
+                key={selected.id}
+                blob={activeBlob}
+                panoramaBlobs={
+                  view === 'result'
+                    ? resultFiles
+                    : draft?.artifacts.map((a) => a.blob)
+                }
+                sliceIndex={slice}
+                onSlice={setSlice}
+                task={selected}
+                recipe={
+                  view === 'result' && selected.result
+                    ? selected.result.recipe
+                    : selectedRecipe
+                }
+                pending={draftBusy || selected.status === 'working'}
+                canProof={!!selected.file && !!selected.asset && !locked}
+                onError={setNotice}
+              />
+              {displayedCount > 1 && (
+                <div className="slice-nav">
+                  <button
+                    className="icon-button"
+                    aria-label="이전 컷"
+                    onClick={() =>
+                      setSlice((i) => (i - 1 + displayedCount) % displayedCount)
+                    }
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  {Array.from({ length: displayedCount }, (_, i) => (
+                    <button
+                      key={i}
+                      className={slice === i ? 'active' : ''}
+                      onClick={() => setSlice(i)}
+                    >
+                      {String(i + 1).padStart(2, '0')}
+                    </button>
+                  ))}
+                  <button
+                    className="icon-button"
+                    aria-label="다음 컷"
+                    onClick={() => setSlice((i) => (i + 1) % displayedCount)}
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                  <span>왼쪽부터 이어지는 분할 순서</span>
+                </div>
+              )}
+              {selected.error && (
+                <div className="inline-error" role="alert">
+                  {selected.error}
+                </div>
+              )}
+              {selected.file &&
+                !selected.asset &&
+                selected.status === 'error' && (
+                  <button
+                    className="button secondary"
+                    disabled={locked}
+                    onClick={() => workspace.addFiles([selected.file])}
+                  >
+                    사진 다시 검사
+                  </button>
+                )}
+              {draftError && (
+                <div className="inline-error" role="alert">
+                  {draftError}
+                </div>
+              )}
+              <div className="source-strip">
+                <span>
+                  {selected.asset?.format?.toUpperCase() || '—'}
+                  <small>입력 포맷</small>
+                </span>
+                <span>
+                  {selected.asset?.bits || '—'}-bit<small>입력 정밀도</small>
+                </span>
+                <span>
+                  {selected.asset?.icc || '확인 중'}
+                  <small>입력 ICC</small>
+                </span>
+              </div>
+              {selected.asset?.provenance === 'embedded-jpeg' && (
+                <div className="source-label">
+                  RAW 내장 JPEG 기반 · 표시 해상도는 추출 이미지 기준입니다.
+                </div>
+              )}
+              {[
+                ...new Set([
+                  ...(selected.asset?.warnings || []),
+                  ...(view === 'result'
+                    ? selected.result?.warnings || []
+                    : draft?.warnings || []),
+                ]),
+              ].map((w) => (
+                <p className="subtle-warning" key={w}>
+                  {w}
+                </p>
+              ))}
+              {recipe.purpose === 'social' && selected.file && (
+                <div className="crop-controls">
+                  <label>
+                    이 사진의 가로 위치
+                    <input
+                      aria-label="크롭 가로 위치"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={selected.crop.cropX}
+                      disabled={locked}
+                      onChange={(e) => {
+                        workspace.setCrop(selected.id, {
+                          cropX: +e.target.value,
+                        });
+                        setView('draft');
+                      }}
+                    />
+                  </label>
+                  <label>
+                    세로 위치
+                    <input
+                      aria-label="크롭 세로 위치"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={selected.crop.cropY}
+                      disabled={locked}
+                      onChange={(e) => {
+                        workspace.setCrop(selected.id, {
+                          cropY: +e.target.value,
+                        });
+                        setView('draft');
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
+              {selected.result && (
+                <div className="output-report">
+                  <div className="report-heading">
+                    <ShieldCheck size={19} />
+                    <h3>저장 파일 검사</h3>
+                    <span>
+                      {selected.result.artifacts.every(
+                        (a) => a.checks.withinTarget,
+                      )
+                        ? '확인 완료'
+                        : '목표 용량 미달'}
+                    </span>
+                  </div>
+                  {selected.result.artifacts.map((a, i) => (
+                    <div className="artifact-row" key={a.key}>
+                      <div>
+                        <strong>
+                          {a.format.toUpperCase()}{' '}
+                          {selected.result.artifacts.length > 1
+                            ? `· ${i + 1}번 컷`
+                            : ''}
+                          <span>{sizeLabel(a.bytes)}</span>
+                        </strong>
+                        <p>
+                          {a.width} × {a.height} · {a.checks.icc} ·{' '}
+                          {a.quality === null
+                            ? a.checks.losslessCopy
+                              ? '픽셀 재압축 없음'
+                              : '무손실 포맷'
+                            : `품질 ${a.quality}`}
+                        </p>
+                        <small>
+                          <Check size={12} />
+                          포맷·디코딩 확인 · {META[a.checks.metadata]}
+                        </small>
+                      </div>
+                      <button
+                        className="icon-button"
+                        disabled={!resultFiles[i]}
+                        aria-label={`${i + 1}번 결과 저장`}
+                        onClick={() =>
+                          downloadBlob(resultFiles[i], resultFiles[i].name)
+                        }
+                      >
+                        <ArrowDownToLine size={19} />
+                      </button>
+                    </div>
+                  ))}
+                  <p className="engine-caption">
+                    {(selected.result.elapsedMs / 1000).toFixed(1)}초 · 원본
+                    수정 없음
+                  </p>
+                  <div className="result-actions">
+                    {canShare && (
+                      <button className="button secondary" onClick={share}>
+                        <Share2 size={16} />
+                        파일 공유
+                      </button>
+                    )}
+                    <button
+                      className="button secondary"
+                      disabled={locked || !selected.file}
+                      onClick={() => process([selected.id])}
+                    >
+                      이 사진 다시 처리
+                    </button>
+                  </div>
+                </div>
+              )}
+              {!selected.file && (
+                <button
+                  className="button secondary reselect"
+                  disabled={locked}
+                  onClick={() => input.current.click()}
+                >
+                  <ImagePlus size={16} />
+                  원본을 다시 선택해 작업 이어가기
+                </button>
+              )}
+              {selected.file && selected.asset && !selected.result && (
+                <button
+                  className="single-proof button secondary"
+                  disabled={locked}
+                  onClick={() => process([selected.id])}
+                >
+                  이 사진 먼저 변환·검증 <ArrowRight size={16} />
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="empty-stage">
+              <div className="empty-art">
+                <div className="frame-line frame-one" />
+                <div className="frame-line frame-two" />
+                <Aperture size={50} strokeWidth={1} />
+              </div>
+              <span className="eyebrow">첫 번째 단계 · 사진 추가</span>
+              <h2>어떤 사진을 바꿔볼까요?</h2>
+              <p>
+                사진을 추가하면 출력 크기와 구도를 미리 보고,
+                <br />
+                원하는 결과를 만들어 저장할 수 있습니다.
+              </p>
+              <button
+                className="button primary"
+                disabled={!ready}
+                onClick={() => input.current.click()}
+              >
+                <ImagePlus size={17} />첫 사진 추가하기
+              </button>
+              <span className="empty-footnote">
+                로컬 처리 · 촬영정보 선택 · 결과 재검증
+              </span>
+            </div>
+          )}
+        </section>
+        {settingsOpen && (
+          <button
+            className="sheet-backdrop"
+            aria-label="설정 닫기"
+            onClick={() => setSettingsOpen(false)}
+          />
+        )}
+        <SettingsPanel
+          recipe={recipe}
+          onChange={patchRecipe}
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          locked={locked}
+        />
+      </main>
+      {archives.length > 0 && (
+        <section className="archive-tray">
+          <div>
+            <h3>ZIP 파일이 준비되었습니다</h3>
+            <p>파일 합계 64MiB 단위로 나눴습니다. 각 파일을 눌러 저장하세요.</p>
+          </div>
+          <div>
+            {archives.map((a) => (
+              <ArchiveLink key={a.name} archive={a} />
+            ))}
+          </div>
+          <button
+            aria-label="ZIP 목록 닫기"
+            className="icon-button"
+            onClick={() => setArchives([])}
+          >
+            <X size={18} />
+          </button>
+        </section>
+      )}
+      <div className="batch-bar">
+        <div className="batch-status">
+          <span
+            className={running || checking ? 'activity active' : 'activity'}
+          />
+          <div>
+            <strong>
+              {running
+                ? paused
+                  ? '현재 사진 완료 후 멈춥니다'
+                  : '사진을 변환하고 검증하고 있어요'
+                : checking
+                  ? '사진 정보를 확인하고 있어요'
+                  : paused
+                    ? '작업이 멈춰 있습니다'
+                    : eligible.length
+                      ? `${eligible.length}장 처리 준비`
+                      : done.length
+                        ? '결과를 저장할 수 있어요'
+                        : '사진을 추가해 주세요'}
+            </strong>
+            <small>
+              {done.length}장 결과 보관 · {tasks.length}장 중{' '}
+              {tasks.filter((t) => t.status === 'error').length}장 실패
+            </small>
+          </div>
+        </div>
+        <div className="batch-buttons">
+          {running ? (
+            <>
+              <button
+                className="button secondary"
+                onClick={workspace.pause}
+                disabled={paused}
+              >
+                <Pause size={17} />
+                일시정지
+              </button>
+              <button className="button secondary" onClick={workspace.cancel}>
+                <Square size={15} />
+                취소
+              </button>
+            </>
+          ) : (
+            <>
+              <label className="timestamp-option">
+                <input
+                  type="checkbox"
+                  checked={timestamp}
+                  onChange={(e) => setTimestamp(e.target.checked)}
+                />
+                ZIP 안 파일명에 날짜
+              </label>
+              {done.length > 0 && (
+                <button
+                  className={`button ${eligible.length ? 'secondary' : 'primary'} zip-button`}
+                  onClick={exportZip}
+                  disabled={zipping}
+                >
+                  {zipping ? (
+                    <LoaderCircle size={16} className="spin" />
+                  ) : (
+                    <ArrowDownToLine size={16} />
+                  )}
+                  {zipping ? `${zipProgress}%` : '전체 ZIP'}
+                </button>
+              )}
+              {(eligible.length > 0 || !done.length) && (
+                <button
+                  className="button primary"
+                  disabled={!eligible.length || !ready || checking}
+                  onClick={() => process()}
+                >
+                  <Play size={16} fill="currentColor" />
+                  {paused
+                    ? '이어서 처리'
+                    : eligible.length
+                      ? `${eligible.length}장 변환하기`
+                      : '사진을 추가해 주세요'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      <footer className="site-footer">
+        <span>LUMINA FLOW / 모든 사진은 당신의 기기 안에서.</span>
+        <span>색상 관리 · 촬영정보 선택 · 파일 검증</span>
+      </footer>
+      {dragging && (
+        <div className="drop-overlay">
+          <ImagePlus size={45} />
+          <h2>여기에 사진을 놓으세요</h2>
+          <p>원본을 수정하거나 서버로 전송하지 않습니다.</p>
+        </div>
+      )}
+    </div>
+  );
+}

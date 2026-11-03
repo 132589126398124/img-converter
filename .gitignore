@@ -23,3 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 .claude/
+public/engine/
+test-results/
+playwright-report/
+tests/fixtures/generated/
+tests/fixtures/external/

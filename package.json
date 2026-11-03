@@ -4,30 +4,33 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "prepare:engine": "node scripts/prepare-engine.mjs",
+    "predev": "npm run prepare:engine",
     "dev": "vite",
+    "prebuild": "npm run prepare:engine",
     "build": "vite build",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/unit.test.mjs tests/engine.test.mjs",
+    "pretest:browser": "npm run build",
+    "test:browser": "playwright test",
+    "fixtures:camera": "node scripts/fetch-camera-fixtures.mjs",
+    "test:camera": "node --test tests/camera.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@wasm-codecs/mozjpeg": "^1.0.1",
-    "browser-image-compression": "^2.0.2",
-    "clsx": "^2.1.1",
     "exifr": "^7.1.3",
-    "framer-motion": "^12.38.0",
     "heic2any": "^0.0.4",
-    "jpeg-js": "^0.4.4",
     "jszip": "^3.10.1",
     "lucide-react": "^1.8.0",
-    "pica": "^10.0.3",
     "piexifjs": "^1.0.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "tailwind-merge": "^3.5.0",
-    "utif": "^3.1.0"
+    "wasm-vips": "0.0.19"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.64.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
@@ -35,7 +38,8 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
-    "vite": "^8.0.4",
-    "vite-plugin-node-polyfills": "^0.28.0"
+    "sharp": "^0.35.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.0.4"
   }
 }
