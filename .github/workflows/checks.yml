@@ -40,7 +40,8 @@ jobs:
       - name: Browser regression tests
         run: npx playwright test
       - name: WebKit compatibility and recovery
-        run: npx playwright test --grep 'desktop: local Worker|20 pictures'
+        run: >-
+          npx playwright test --grep 'desktop: local Worker|20 pictures'
         env:
           PLAYWRIGHT_BROWSER: webkit
       - name: Upload test results
