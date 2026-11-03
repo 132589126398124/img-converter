@@ -902,15 +902,23 @@ export default function App() {
               {(eligible.length > 0 || !done.length) && (
                 <button
                   className="button primary"
-                  disabled={!eligible.length || !ready || checking}
-                  onClick={() => process()}
+                  disabled={
+                    (!eligible.length && tasks.length > 0) || !ready || checking
+                  }
+                  onClick={() =>
+                    tasks.length ? process() : input.current.click()
+                  }
                 >
-                  <Play size={16} fill="currentColor" />
+                  {tasks.length ? (
+                    <Play size={16} fill="currentColor" />
+                  ) : (
+                    <ImagePlus size={16} />
+                  )}
                   {paused
                     ? '이어서 처리'
                     : eligible.length
                       ? `${eligible.length}장 변환하기`
-                      : '사진을 추가해 주세요'}
+                      : '사진 추가하기'}
                 </button>
               )}
             </>

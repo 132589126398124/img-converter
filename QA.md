@@ -58,3 +58,14 @@ npm run test:browser
 - 재현한 WebKit Worker 캐시 보안 정책 오류: 동일 출처 CORP 및 JS `no-store` 응답 적용 후 통과. [유사한 WebKit 캐시 정책 이슈](https://bugs.webkit.org/show_bug.cgi?id=245346)는 참고 자료이며, 현재 재현과 동일한 결함이라고 단정하지 않습니다.
 - 재현한 Windows WebKit IndexedDB 오류: 5바이트 Blob 저장은 UnknownError, 문자열/ArrayBuffer 저장은 성공. 완료 파일과 썸네일을 바이트 레코드로 기록해 복원을 검증했습니다. 기존 Blob 레코드 읽기도 유지합니다.
 - 저장 실패 원인은 QuotaExceededError와 그 밖의 저장 오류를 구분해 표시합니다.
+
+## Vercel 배포 검증 (2026-11-03)
+
+- 서비스: https://img-converter-tau.vercel.app
+- 구현 커밋 `d6af0b3`, CI 구문/테마 수정 `259bf42`. 두 커밋 모두 Vercel success 확인.
+- 실제 HTTPS 서비스에서 Chrome 전체 7개 시나리오 통과: 100장, 실제 R6 Mark III, 용량 부족, 출력 파일/ZIP/복원 포함.
+- 실제 HTTPS 서비스에서 Windows WebKit 2개 시나리오 통과: 변환·다운로드·ZIP·복원 및 모바일 화면 20장.
+- 문서/Worker/런타임 JS/WASM의 COOP·COEP·CORP와 실제 `crossOriginIsolated=true` 확인. Worker JS `no-store`, WASM `application/wasm` 확인.
+- 배포 첫 화면 1440 / 393 / 320px 너비에서 가로 넘침 없음. PC·모바일 렌더링 직접 확인.
+- GitHub Actions `41626924031` success: Linux 환경 npm ci, lint, TypeScript, 이미지 회귀, 빌드, Chromium 및 WebKit 검사.
+- iPhone 실기기 확인은 사용자에게 테스트 순서를 전달했으며 결과 대기 중입니다. Android 실기기 검증도 아직 없습니다.
