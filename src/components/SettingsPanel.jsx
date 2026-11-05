@@ -6,7 +6,7 @@ import {
   SlidersHorizontal,
   X,
 } from 'lucide-react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useDialog } from './useDialog';
 
 export function PurposeButtons({ purpose, onChange, disabled }) {
@@ -53,6 +53,7 @@ export default function SettingsPanel({
   onClose,
 }) {
   const dialog = useRef();
+  const [customSize, setCustomSize] = useState(false);
   useDialog(open, dialog, onClose);
   return (
     <aside
@@ -64,7 +65,7 @@ export default function SettingsPanel({
     >
       <div className="panel-title">
         <h2>출력 설정</h2>
-        <span className="settings-label">RECIPE</span>
+        <span className="settings-label">모든 사진에 적용</span>
         <button
           className="icon-button sheet-close"
           aria-label="설정 닫기"
@@ -81,9 +82,65 @@ export default function SettingsPanel({
             disabled={locked}
             onChange={(purpose) => onChange({ purpose })}
           />
+          {r.purpose === 'size' && (
+            <div className="target-budget">
+              <Field
+                label="목표 용량 · 사진 한 장당"
+                hint="이 용량 이하에서 가능한 최고 품질로 저장합니다. 해상도는 자동으로 줄이지 않습니다."
+              >
+                <div className="unit-input">
+                  <input
+                    aria-label="최대 용량 MB"
+                    type="number"
+                    min="0.001"
+                    max="1024"
+                    step="0.1"
+                    value={Number((r.maxBytes / 1048576).toFixed(3))}
+                    onChange={(e) =>
+                      onChange({
+                        maxBytes: Math.max(
+                          1,
+                          Math.min(
+                            1073741824,
+                            Math.round((+e.target.value || 0) * 1048576),
+                          ),
+                        ),
+                      })
+                    }
+                  />
+                  <span>MiB</span>
+                </div>
+              </Field>
+              <div className="size-presets">
+                {[1, 2, 5].map((size) => (
+                  <button
+                    type="button"
+                    key={size}
+                    aria-pressed={r.maxBytes === size * 1048576}
+                    onClick={() => onChange({ maxBytes: size * 1048576 })}
+                  >
+                    {size} MiB
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <div className="setting-section">
           <span className="setting-number">02 / 크기와 품질</span>
+          <Field label="출력 포맷">
+            <select
+              aria-label="출력 포맷"
+              value={r.format}
+              onChange={(e) => onChange({ format: e.target.value })}
+            >
+              <option value="jpg">JPG · 사진 호환성</option>
+              <option value="webp">WebP · 웹용</option>
+              <option value="png">PNG · 무손실</option>
+              <option value="avif">AVIF · 고급 압축</option>
+            </select>
+          </Field>
+
           <Field
             label="장축 길이"
             hint="가로·세로 비율 유지 · 작은 사진 확대 안 함"
@@ -91,16 +148,20 @@ export default function SettingsPanel({
             <select
               aria-label="장축 길이 프리셋"
               value={
+                !customSize &&
                 [0, 4096, 2560, 2160, 2048, 1920, 1080].includes(r.longEdge)
                   ? r.longEdge
                   : 'custom'
               }
-              onChange={(e) =>
+              onChange={(e) => {
+                setCustomSize(e.target.value === 'custom');
                 onChange({
                   longEdge:
-                    e.target.value === 'custom' ? 2000 : +e.target.value,
-                })
-              }
+                    e.target.value === 'custom'
+                      ? r.longEdge || 2000
+                      : +e.target.value,
+                });
+              }}
             >
               <option value="0">원본 크기 유지</option>
               {[4096, 2560, 2160, 2048, 1920, 1080].map((n) => (
@@ -111,26 +172,29 @@ export default function SettingsPanel({
               <option value="custom">직접 입력</option>
             </select>
           </Field>
-          <Field label="직접 지정 (0 = 원본)">
-            <div className="unit-input">
-              <input
-                type="number"
-                aria-label="장축 직접 지정"
-                min="0"
-                max="30000"
-                value={r.longEdge}
-                onChange={(e) =>
-                  onChange({
-                    longEdge: Math.max(
-                      0,
-                      Math.min(30000, +e.target.value || 0),
-                    ),
-                  })
-                }
-              />
-              <span>px</span>
-            </div>
-          </Field>
+          {(customSize ||
+            ![0, 4096, 2560, 2160, 2048, 1920, 1080].includes(r.longEdge)) && (
+            <Field label="직접 지정 (px)">
+              <div className="unit-input">
+                <input
+                  type="number"
+                  aria-label="장축 직접 지정"
+                  min="0"
+                  max="30000"
+                  value={r.longEdge}
+                  onChange={(e) =>
+                    onChange({
+                      longEdge: Math.max(
+                        0,
+                        Math.min(30000, +e.target.value || 0),
+                      ),
+                    })
+                  }
+                />
+                <span>px</span>
+              </div>
+            </Field>
+          )}
           <Field
             label={r.purpose === 'size' ? '최대 인코딩 품질' : '인코딩 품질'}
             hint={
@@ -152,35 +216,6 @@ export default function SettingsPanel({
               <output>{r.format === 'png' ? '—' : r.quality}</output>
             </div>
           </Field>
-          {r.purpose === 'size' && (
-            <Field
-              label="파일당 최대 용량"
-              hint="ICC·촬영정보 포함. 해상도 변경 없이 품질을 탐색합니다."
-            >
-              <div className="unit-input">
-                <input
-                  aria-label="최대 용량 MB"
-                  type="number"
-                  min="0.001"
-                  max="1024"
-                  step="0.1"
-                  value={Number((r.maxBytes / 1048576).toFixed(3))}
-                  onChange={(e) =>
-                    onChange({
-                      maxBytes: Math.max(
-                        1,
-                        Math.min(
-                          1073741824,
-                          Math.round((+e.target.value || 0) * 1048576),
-                        ),
-                      ),
-                    })
-                  }
-                />
-                <span>MiB</span>
-              </div>
-            </Field>
-          )}
         </div>
         {r.purpose === 'social' && (
           <div className="setting-section">
@@ -266,21 +301,9 @@ export default function SettingsPanel({
         </div>
         <details className="advanced-settings">
           <summary>
-            색공간·포맷 고급 설정
+            색상 고급 설정
             <ChevronDown size={15} />
           </summary>
-          <Field label="출력 포맷">
-            <select
-              aria-label="출력 포맷"
-              value={r.format}
-              onChange={(e) => onChange({ format: e.target.value })}
-            >
-              <option value="jpg">JPG · 사진 호환성</option>
-              <option value="webp">WebP · 웹용</option>
-              <option value="png">PNG · 무손실</option>
-              <option value="avif">AVIF · 고급 압축</option>
-            </select>
-          </Field>
           <Field label="출력 색공간">
             <select
               aria-label="출력 색공간"

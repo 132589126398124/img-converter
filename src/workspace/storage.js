@@ -135,3 +135,17 @@ export async function deleteTask(task) {
     tx.objectStore('artifacts').delete(item.key);
   await done;
 }
+
+export async function deleteTasks(tasks) {
+  const data = await db();
+  const tx = data.transaction(['tasks', 'artifacts'], 'readwrite');
+  const done = settled(tx);
+  for (const task of tasks) {
+    tx.objectStore('tasks').delete(task.id);
+    for (const item of task.result?.artifacts || [])
+      tx.objectStore('artifacts').delete(item.key);
+  }
+  await done;
+  for (const task of tasks)
+    for (const item of task.result?.artifacts || []) volatile.delete(item.key);
+}

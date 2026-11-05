@@ -137,7 +137,20 @@ export default function App() {
         JSON.stringify(t.result.recipe) !==
           JSON.stringify(normalizeRecipe({ ...recipe, ...t.crop }))),
   );
-  const locked = running || checking;
+  const locked = running || checking || workspace.clearing;
+  const clearList = async () => {
+    if (
+      !window.confirm(
+        `사진 ${tasks.length}장을 목록에서 비울까요?\n이 브라우저에 임시 보관한 변환 결과도 삭제됩니다. 원본과 다운로드한 파일은 유지됩니다.`,
+      )
+    )
+      return;
+    if (await workspace.clear()) {
+      setArchives([]);
+      setSelectedId(null);
+      setStep('files');
+    }
+  };
   const patchRecipe = (patch) => {
     setRecipe((prev) => normalizeRecipe({ ...prev, ...patch }));
     setView('draft');
@@ -195,7 +208,7 @@ export default function App() {
     setDraft(null);
     setDraftError('');
     setDraftBusy(false);
-    if (!selected?.file || !selected.asset || locked)
+    if (!selected?.file || !selected.asset || locked || view !== 'draft')
       return () => abort.abort();
     const timer = setTimeout(() => {
       setDraftBusy(true);
@@ -216,7 +229,7 @@ export default function App() {
       clearTimeout(timer);
       abort.abort();
     };
-  }, [selected, recipeKey, locked]);
+  }, [selected, recipeKey, locked, view]);
   useEffect(() => {
     let active = true;
     setResultFiles([]);
@@ -294,7 +307,7 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${tasks.length ? 'has-tasks' : ''}`}>
       <input
         ref={input}
         id="file-input"
@@ -387,6 +400,15 @@ export default function App() {
             <h2>
               사진 목록 <span>{tasks.length.toString().padStart(2, '0')}</span>
             </h2>
+            {tasks.length > 0 && (
+              <button
+                className="text-button clear-list"
+                disabled={locked || zipping}
+                onClick={clearList}
+              >
+                전체 비우기
+              </button>
+            )}
             <button
               className="icon-button"
               aria-label="사진 추가"
@@ -494,6 +516,16 @@ export default function App() {
               </span>
               <h2>{selected ? selected.name : '사진을 위한 작업 공간'}</h2>
             </div>
+            {resultFiles[slice] && (
+              <button
+                className="button primary quick-save"
+                onClick={() =>
+                  downloadBlob(resultFiles[slice], resultFiles[slice].name)
+                }
+              >
+                <ArrowDownToLine size={16} />이 사진 저장
+              </button>
+            )}
             <button
               className="mobile-settings button secondary"
               onClick={() => setSettingsOpen(true)}
@@ -506,11 +538,28 @@ export default function App() {
             <PurposeButtons
               purpose={recipe.purpose}
               disabled={locked}
-              onChange={(purpose) => patchRecipe({ purpose })}
+              onChange={(purpose) => {
+                patchRecipe({ purpose });
+                setSettingsOpen(true);
+              }}
             />
           </div>
           {selected ? (
             <>
+              {!selected.file && (
+                <div className="source-required" role="status">
+                  <span>
+                    {selected.result ? '저장한 결과입니다. 설정 변경·비교에는 원본이 필요해요.' : '처리를 이어가려면 원본을 다시 선택해 주세요.'}
+                  </span>
+                  <button
+                    className="text-button"
+                    disabled={locked}
+                    onClick={() => input.current.click()}
+                  >
+                    원본 다시 선택
+                  </button>
+                </div>
+              )}
               <div className="viewer-tabs">
                 <button
                   disabled={!selected.file}

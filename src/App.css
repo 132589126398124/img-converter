@@ -1250,10 +1250,10 @@
     display: block;
     min-height: 480px;
   }
-  .studio[data-step="files"] .stage {
+  .studio[data-step='files'] .stage {
     display: none;
   }
-  .studio:not([data-step="files"]) .photo-rail {
+  .studio:not([data-step='files']) .photo-rail {
     display: none;
   }
   .photo-rail {
@@ -1447,7 +1447,7 @@
   .field-note {
     font-size: 12px;
   }
-  .field input[type="number"],
+  .field input[type='number'],
   .field select {
     font-size: 16px;
   }
@@ -1746,16 +1746,88 @@
     font-size: 13px;
   }
 }
+/* A desktop workbench occupies the viewport; the action bar never covers it. */
+.quick-save {
+  margin-left: auto;
+}
+.source-required {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 12px;
+}
+.source-required .text-button {
+  flex-shrink: 0;
+}
 @media (min-width: 981px) {
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: 0 24px 14px;
+    max-width: 1920px;
+  }
+  .topbar {
+    height: 64px;
+    flex-shrink: 0;
+    border-bottom: 0;
+  }
+  .brand {
+    font-size: 21px;
+  }
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+  }
+  .intro-row {
+    padding: 8px 0 18px;
+  }
+  .intro-row h1 {
+    font-size: 26px;
+    margin: 4px 0;
+  }
+  .intro-row .eyebrow,
+  .intro-note {
+    display: none;
+  }
+  .has-tasks .intro-row {
+    display: none;
+  }
   .studio {
-    height: max(620px, calc(100dvh - 350px));
-    min-height: 620px;
+    flex: 1;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: 220px minmax(0, 1fr) 310px;
+    border-radius: 14px;
   }
   .stage,
   .inspector {
+    min-height: 0;
     overflow-y: auto;
     scrollbar-width: thin;
     overscroll-behavior: contain;
+  }
+  .stage {
+    padding: 16px 20px;
+  }
+  .stage-toolbar {
+    margin-bottom: 12px;
+    min-height: 44px;
+  }
+  .stage-toolbar h2 {
+    font-size: 16px;
+  }
+  .stage-toolbar .eyebrow {
+    display: none;
+  }
+  .panel-title {
+    min-height: 56px;
+    padding: 8px 16px;
   }
   .photo-rail {
     min-height: 0;
@@ -1765,15 +1837,116 @@
     min-height: 0;
     max-height: none;
   }
+  .has-tasks .add-zone {
+    margin: 10px;
+    padding: 12px;
+    min-height: 44px;
+    flex-direction: row;
+    gap: 8px;
+  }
+  .has-tasks .add-zone > span,
+  .has-tasks .add-zone small {
+    display: none;
+  }
+  .has-tasks .add-zone strong {
+    margin: 0;
+    font-size: 13px;
+  }
+  .has-tasks .add-zone > svg {
+    width: 18px;
+    height: 18px;
+  }
   .inspector .panel-title {
     position: sticky;
     top: 0;
     z-index: 2;
     background: var(--panel);
   }
-  .batch-bar {
-    position: sticky;
-    bottom: 16px;
-    z-index: 10;
+  .inspector fieldset {
+    padding: 0 16px;
   }
+  .setting-section {
+    padding: 14px 0;
+  }
+  .setting-number {
+    margin-bottom: 10px;
+  }
+  .purpose-buttons button {
+    min-height: 42px;
+    padding: 9px 12px;
+  }
+  .purpose-buttons button small {
+    display: none;
+  }
+  .field {
+    margin-top: 12px;
+  }
+  .settings-label {
+    letter-spacing: 0;
+    font-size: 11px;
+  }
+  .photo-canvas {
+    min-height: 160px;
+    height: clamp(160px, calc(100dvh - 350px), 620px);
+    padding: 16px 16px 26px;
+  }
+  .batch-bar {
+    position: static;
+    flex-shrink: 0;
+    min-height: 66px;
+    margin-top: 10px;
+    padding: 10px 18px;
+  }
+  .site-footer {
+    display: none;
+  }
+  .empty-stage {
+    min-height: 0;
+    padding: 20px 0;
+  }
+  .empty-art {
+    width: 100px;
+    height: 100px;
+    margin-bottom: 22px;
+  }
+}
+@media (max-width: 640px) {
+  .quick-save {
+    padding: 8px 10px;
+    min-height: 40px;
+    font-size: 12px;
+  }
+  .source-required {
+    flex-wrap: wrap;
+  }
+}
+.size-presets {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.size-presets button {
+  flex: 1;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 13px;
+}
+.size-presets button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.clear-list {
+  white-space: nowrap;
+  min-height: 36px;
+  font-size: 12px;
+}
+.photo-rail .panel-title {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.photo-rail .panel-title h2 {
+  margin-right: auto;
 }

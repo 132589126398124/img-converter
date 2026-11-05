@@ -94,7 +94,7 @@ test('desktop: 100 pictures, immutable settings, pause and cancellation preserve
   await expect
     .poll(() => page.locator('.status-done').count())
     .toBeGreaterThan(0);
-  await expect(page.getByLabel('장축 직접 지정')).toBeDisabled();
+  await expect(page.getByLabel('장축 길이 프리셋')).toBeDisabled();
   await page.getByRole('button', { name: '일시정지', exact: true }).click();
   await expect(page.getByRole('button', { name: '이어서 처리' })).toBeEnabled({
     timeout: 60000,
@@ -161,12 +161,13 @@ test.describe('mobile viewport (emulation, not a physical device)', () => {
       timeout: 90000,
     });
     await page.getByRole('button', { name: '02 설정·미리보기' }).click();
-    await page.getByRole('button', { name: '설정', exact: true }).click();
     await page
-      .locator('.inspector .purpose-buttons')
+      .locator('.mobile-purpose .purpose-buttons')
       .getByRole('button', { name: 'SNS 프레임' })
       .click();
+    await expect(page.getByRole('dialog', { name: '출력 설정' })).toBeVisible();
     await page.getByLabel('파노라마 분할').selectOption('2');
+    await page.getByLabel('장축 길이 프리셋').selectOption('custom');
     await page.getByLabel('장축 직접 지정').fill('240');
     await page.getByRole('button', { name: '제거', exact: true }).click();
     await page.screenshot({
@@ -330,4 +331,74 @@ test('browser PNG and AVIF encoders preserve ICC and do not fall back to a diffe
     expect(metadata.exif).toBeUndefined();
     expect(file.suggestedFilename()).toBe(`codecs.${format}`);
   }
+});
+
+test('desktop workflow: size target is immediately visible and clearing is atomic and confirmed', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto('/');
+  await expect(
+    page.getByRole('button', { name: '첫 사진 추가하기' }),
+  ).toBeEnabled();
+  const buffer = await photo(640, 480);
+  await page.locator('#file-input').setInputFiles([
+    { name: 'clear-one.jpg', mimeType: 'image/jpeg', buffer },
+    { name: 'clear-two.jpg', mimeType: 'image/jpeg', buffer },
+  ]);
+  await expect(page.locator('.status-ready')).toHaveCount(2);
+  await page
+    .locator('.inspector')
+    .getByRole('button', { name: '용량 맞추기', exact: true })
+    .click();
+  const target = page.getByLabel('최대 용량 MB');
+  await expect(target).toBeVisible();
+  const rect = await target.boundingBox();
+  const footer = await page.locator('.batch-bar').boundingBox();
+  expect(rect.y).toBeGreaterThan(0);
+  expect(rect.y + rect.height).toBeLessThan(footer.y);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollHeight <= innerHeight + 1,
+    ),
+  ).toBe(true);
+  await page.getByRole('button', { name: '1 MiB', exact: true }).click();
+  await expect(target).toHaveValue('1');
+  await expect(page.getByLabel('출력 포맷', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('장축 직접 지정')).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/desktop-workflow.png' });
+  await page.getByRole('button', { name: '2장 변환하기' }).click();
+  await expect(page.locator('.status-done')).toHaveCount(2);
+  await expect(
+    page.getByRole('button', { name: '이 사진 저장', exact: true }),
+  ).toBeEnabled();
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: '전체 비우기', exact: true }).click();
+  await expect(page.locator('.status-done')).toHaveCount(2);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: '전체 비우기', exact: true }).click();
+  await expect(page.locator('.photo-item')).toHaveCount(0);
+  const counts = await page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('lumina-flow', 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction(['tasks', 'artifacts']);
+          const a = tx.objectStore('tasks').count();
+          const b = tx.objectStore('artifacts').count();
+          tx.oncomplete = () => {
+            resolve([a.result, b.result]);
+            db.close();
+          };
+        };
+      }),
+  );
+  expect(counts).toEqual([0, 0]);
+  await page.reload();
+  await expect(
+    page.getByRole('button', { name: '첫 사진 추가하기' }),
+  ).toBeEnabled();
+  await expect(page.locator('.photo-item')).toHaveCount(0);
 });

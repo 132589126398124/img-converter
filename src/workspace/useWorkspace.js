@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as engine from '../engine/client';
 import { normalizeRecipe } from '../engine/recipe.js';
-import { listTasks, saveTask, saveResult, deleteTask } from './storage.js';
+import {
+  listTasks,
+  saveTask,
+  saveResult,
+  deleteTask,
+  deleteTasks,
+} from './storage.js';
 
 export function useWorkspace() {
   const [tasks, setTasks] = useState([]),
@@ -9,6 +15,7 @@ export function useWorkspace() {
   const [running, setRunning] = useState(false),
     [paused, setPaused] = useState(false),
     [notice, setNotice] = useState('');
+  const [clearing, setClearing] = useState(false);
   const current = useRef([]),
     pausedRef = useRef(false),
     controller = useRef(),
@@ -215,6 +222,27 @@ export function useWorkspace() {
         t.id === id ? { ...t, crop: { ...t.crop, ...crop } } : t,
       ),
     );
+  const clear = async () => {
+    if (busy.current || importing.current || !ready) return false;
+    busy.current = true;
+    setClearing(true);
+    try {
+      await deleteTasks(current.current);
+      update(() => []);
+      pausedRef.current = false;
+      setPaused(false);
+      setNotice(
+        '목록을 비웠습니다. 원본과 이미 다운로드한 파일은 그대로입니다.',
+      );
+      return true;
+    } catch {
+      setNotice('목록을 비우지 못했습니다. 다시 시도하세요.');
+      return false;
+    } finally {
+      busy.current = false;
+      setClearing(false);
+    }
+  };
   return {
     tasks,
     ready,
@@ -227,6 +255,8 @@ export function useWorkspace() {
     pause,
     cancel,
     remove,
+    clear,
+    clearing,
     setCrop,
     checking: tasks.some((t) => t.status === 'inspecting'),
   };
