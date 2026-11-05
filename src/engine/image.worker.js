@@ -47,12 +47,13 @@ async function execute({
     self.postMessage({ id, result });
   } catch (error) {
     const message = String(error?.message || error);
+    const fatal = /out of memory|insufficient memory|memory access|aborted|allocation failed/i.test(message);
     self.postMessage({
       id,
-      error: message,
-      fatal: /out of memory|memory access|aborted|allocation failed/i.test(
-        message,
-      ),
+      error: fatal
+        ? `이미지 엔진의 메모리가 부족하거나 실행이 중단되었습니다. 엔진을 초기화했습니다. 완료된 결과는 유지됩니다. 재시도하거나 장축 길이를 줄여 주세요. (${message})`
+        : message,
+      fatal,
     });
   }
 }

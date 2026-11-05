@@ -225,7 +225,7 @@ test('CR3 browser path extracts the largest embedded JPEG and makes its provenan
   await expect(page.locator('.status-done')).toHaveCount(1);
 });
 
-test('real R6 Mark III 32MP RAW loads and converts inside the browser Worker', async ({
+test('three real R6 Mark III 32MP RAW files convert at original resolution inside the browser Worker', async ({
   page,
 }) => {
   test.skip(
@@ -236,17 +236,16 @@ test('real R6 Mark III 32MP RAW loads and converts inside the browser Worker', a
   await expect(
     page.getByRole('button', { name: '첫 사진 추가하기' }),
   ).toBeEnabled();
-  await page
-    .locator('#file-input')
-    .setInputFiles('tests/fixtures/external/r6-iii-raw.CR3');
-  await expect(page.locator('.status-ready')).toHaveCount(1, {
-    timeout: 60000,
-  });
-  await expect(page.locator('.photo-label')).toContainText('6960 × 4640');
-  await page.getByLabel('장축 길이 프리셋').selectOption('2048');
-  await page.getByRole('button', { name: '이 사진 먼저 변환·검증' }).click();
-  await expect(page.locator('.status-done')).toHaveCount(1, { timeout: 60000 });
+  const buffer = await readFile('tests/fixtures/external/r6-iii-raw.CR3');
+  for (let i = 0; i < 3; i++) {
+    await page.locator('#file-input').setInputFiles({ name: `r6-${i}.CR3`, mimeType: 'image/x-canon-cr3', buffer });
+    await expect(page.locator('.status-ready')).toHaveCount(i + 1, { timeout: 60000 });
+  }
+  await expect(page.locator('.photo-label').first()).toContainText('6960 × 4640');
+  await page.getByRole('button', { name: '3장 변환하기' }).click();
+  await expect(page.locator('.status-done')).toHaveCount(3, { timeout: 120000 });
   await expect(page.locator('.output-report')).toContainText('촬영정보 확인됨');
+  await expect(page.locator('.output-report')).toContainText('6960');
   await page.screenshot({
     path: 'test-results/real-r6-iii.png',
     fullPage: true,

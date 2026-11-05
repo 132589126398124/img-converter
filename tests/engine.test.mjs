@@ -28,6 +28,25 @@ after(() => {
   v.PThread?.terminateAllThreads?.();
 });
 
+test('low-memory JPEG coding preserves decoded pixels and cached size search preserves the selected result', async () => {
+  const optimized = createEngine(v, {
+    adobePath: 'public/profiles/AdobeCompat-v2.icc',
+    jpegOptimizeCoding: true,
+  });
+  const normal = await bytesOf(await engine.run(input, 'input.jpg', { quality: 95 }));
+  const compact = await bytesOf(await optimized.run(input, 'input.jpg', { quality: 95 }));
+  assert.deepEqual(await sharp(normal).raw().toBuffer(), await sharp(compact).raw().toBuffer());
+  const limited = await engine.run(input, 'input.jpg', { purpose: 'size', maxBytes: 7000 });
+  const artifact = limited.artifacts[0];
+  const direct = await bytesOf(await engine.run(input, 'input.jpg', { quality: artifact.quality }));
+  assert.deepEqual(await bytesOf(limited), direct);
+  assert.ok(artifact.bytes <= 7000);
+  if (artifact.quality < 95) {
+    const higher = await engine.run(input, 'input.jpg', { quality: artifact.quality + 1 });
+    assert.ok(higher.artifacts[0].bytes > 7000);
+  }
+});
+
 test('real JPG/WebP/PNG/AVIF outputs match their signatures, have ICC, decode and strip all shooting metadata', async () => {
   for (const format of ['jpg', 'webp', 'png', 'avif']) {
     const result = await engine.run(input, 'input.jpg', {

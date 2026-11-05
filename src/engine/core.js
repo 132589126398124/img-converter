@@ -87,7 +87,12 @@ class Handles {
     return image;
   }
   close() {
-    for (const image of this.items.reverse()) image.delete();
+    for (const image of this.items.splice(0).reverse()) image.delete();
+  }
+  release(image) {
+    const index = this.items.indexOf(image);
+    if (index >= 0) this.items.splice(index, 1);
+    image.delete();
   }
 }
 
@@ -98,6 +103,7 @@ export function createEngine(
     adobePath = '/adobe.icc',
     sourceProfilePath = '/source.icc',
     maxPixels = 200000000,
+    jpegOptimizeCoding = false,
   } = {},
 ) {
   vips.concurrency(2);
@@ -380,7 +386,9 @@ export function createEngine(
     if (recipe.format === 'jpg')
       bytes = image.jpegsaveBuffer({
         Q: quality,
-        optimize_coding: true,
+        // Optimized Huffman tables buffer the full DCT image. Standard tables
+        // keep the same quantization/pixels without that large allocation.
+        optimize_coding: jpegOptimizeCoding,
         subsample_mode: 'off',
         keep,
       });
@@ -427,44 +435,48 @@ export function createEngine(
     if (sniff(bytes) !== recipe.format)
       throw new Error('실제 출력 포맷과 요청한 포맷이 다릅니다.');
     const image = handles.add(
-      vips.Image.newFromBuffer(bytes, '', { fail_on: 'error' }),
+      vips.Image.newFromBuffer(bytes, '', { fail_on: 'error', access: 'sequential' }),
     );
-    if (image.width !== width || image.height !== height)
-      throw new Error('출력 해상도 검증에 실패했습니다.');
-    // Force decoding, rather than accepting a readable header as proof of an intact file.
-    image.avg();
-    const icc = blobField(image, 'icc-profile-data');
-    if (!icc) throw new Error('출력 파일의 ICC가 누락되었습니다.');
-    const iccName = describeIcc(icc);
-    if (
-      recipe.metadata === 'strip' &&
-      (metadataContainers(bytes).length ||
-        fields(image).some((f) =>
-          /^(exif-|xmp-data|iptc-data|photoshop-data|comment)/i.test(f),
-        ))
-    )
-      throw new Error('촬영정보 컨테이너 제거 검증에 실패했습니다.');
-    const outputMetadata = await readMetadata(
-      blobField(image, 'exif-data') || bytes,
-    );
-    const metadata = verifyShotMetadata(input.metadata, outputMetadata, recipe);
-    return {
-      blob: new Blob([bytes], { type: MIME[recipe.format] }),
-      format: recipe.format,
-      width,
-      height,
-      bytes: bytes.length,
-      quality,
-      checks: {
-        signature: true,
-        decoded: true,
-        icc: iccName,
-        metadata,
-        withinTarget:
-          recipe.purpose !== 'size' || bytes.length <= recipe.maxBytes,
-        losslessCopy,
-      },
-    };
+    try {
+      if (image.width !== width || image.height !== height)
+        throw new Error('출력 해상도 검증에 실패했습니다.');
+      // Force decoding, rather than accepting a readable header as proof of an intact file.
+      image.avg();
+      const icc = blobField(image, 'icc-profile-data');
+      if (!icc) throw new Error('출력 파일의 ICC가 누락되었습니다.');
+      const iccName = describeIcc(icc);
+      if (
+        recipe.metadata === 'strip' &&
+        (metadataContainers(bytes).length ||
+          fields(image).some((f) =>
+            /^(exif-|xmp-data|iptc-data|photoshop-data|comment)/i.test(f),
+          ))
+      )
+        throw new Error('촬영정보 컨테이너 제거 검증에 실패했습니다.');
+      const outputMetadata = await readMetadata(
+        blobField(image, 'exif-data') || bytes,
+      );
+      const metadata = verifyShotMetadata(input.metadata, outputMetadata, recipe);
+      return {
+        blob: new Blob([bytes], { type: MIME[recipe.format] }),
+        format: recipe.format,
+        width,
+        height,
+        bytes: bytes.length,
+        quality,
+        checks: {
+          signature: true,
+          decoded: true,
+          icc: iccName,
+          metadata,
+          withinTarget:
+            recipe.purpose !== 'size' || bytes.length <= recipe.maxBytes,
+          losslessCopy,
+        },
+      };
+    } finally {
+      handles.release(image);
+    }
   }
 
   return {
@@ -566,7 +578,14 @@ export function createEngine(
             ),
           ];
         } else {
-          const { output, count } = render(input, recipe, handles, preview);
+          let { output, count } = render(input, recipe, handles, preview);
+          if (!preview && recipe.purpose === 'size' && recipe.format !== 'png') {
+            // Evaluate ICC/resize once rather than once per candidate quality.
+            // Only final 8-bit pixels are retained, never the high-bit pipeline.
+            const pixels = output.copyMemory();
+            handles.close();
+            output = handles.add(pixels);
+          }
           artifacts = [];
           for (let i = 0; i < count; i++) {
             const image =
