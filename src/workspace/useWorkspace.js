@@ -187,6 +187,11 @@ export function useWorkspace() {
           update((prev) => prev.map((t) => (t.id === item.id ? failed : t)));
           await persist(failed);
           if (error.name === 'AbortError') break;
+          if (error.name === 'EngineResourceError') {
+            pausedRef.current = true;
+            setNotice('메모리 또는 인코더 오류로 다음 작업을 멈췄습니다. 완료된 결과는 저장할 수 있습니다. 이어서 처리하면 실패한 사진부터 새 엔진으로 재시도합니다.');
+            break;
+          }
         }
       }
     } finally {

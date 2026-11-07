@@ -1,9 +1,92 @@
 import { test, expect } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import sharp from 'sharp';
 import JSZip from 'jszip';
 import { photo, cr3Fixture } from './fixtures.mjs';
+import { extractCr3 } from '../src/engine/rawPreview.js';
+
+test('resource failure pauses the batch, keeps completed files and resumes on a fresh worker', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__runs = [];
+    const original = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...rest) {
+      if (message?.method === 'run') {
+        window.__runs.push(message.file.name);
+        if (window.__runs.length === 2) {
+          setTimeout(() => this.dispatchEvent(new MessageEvent('message', {
+            data: { id: message.id, fatal: true, error: 'vips_tracked: out of memory -- size == 98MB' },
+          })), 0);
+          return;
+        }
+      }
+      return original.call(this, message, ...rest);
+    };
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '첫 사진 추가하기' })).toBeEnabled();
+  const buffer = await photo(640, 480);
+  await page.locator('#file-input').setInputFiles([0, 1, 2].map(i => ({ name: `recovery-${i}.jpg`, mimeType: 'image/jpeg', buffer })));
+  await expect(page.locator('.status-ready')).toHaveCount(3);
+  await page.getByRole('button', { name: '3장 변환하기' }).click();
+  await expect(page.getByRole('button', { name: '이어서 처리' })).toBeEnabled();
+  await expect(page.locator('.status-done')).toHaveCount(1);
+  await expect(page.locator('.status-error')).toHaveCount(1);
+  await expect(page.locator('.status-ready')).toHaveCount(1);
+  expect(await page.evaluate(() => window.__runs)).toEqual(['recovery-0.jpg', 'recovery-1.jpg']);
+  await page.getByRole('button', { name: '이어서 처리' }).click();
+  await expect(page.locator('.status-done')).toHaveCount(3);
+  expect(await page.evaluate(() => window.__runs)).toEqual(['recovery-0.jpg', 'recovery-1.jpg', 'recovery-1.jpg', 'recovery-2.jpg']);
+});
+
+test('opt-in: 51 original 32MP JPEG files convert to WebP Q95 with bounded worker lifetime', async ({ page }) => {
+  test.skip(!process.env.LUMINA_WEBP_STRESS, 'Opt-in high-resolution batch');
+  test.setTimeout(1800000);
+  const input = extractCr3(new Uint8Array(await readFile('tests/fixtures/external/r6-iii-raw.CR3'))).bytes;
+  const directory = 'tests/fixtures/generated/webp-batch';
+  await mkdir(directory, { recursive: true });
+  const paths = [];
+  for (let i = 0; i < 51; i++) {
+    const path = `${directory}/photo-${i}.jpg`;
+    await writeFile(path, input);
+    paths.push(path);
+  }
+  await page.addInitScript(() => {
+    window.__finalWorkers = [];
+    const original = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...rest) {
+      if (message?.method === 'run') window.__finalWorkers.push(this);
+      return original.call(this, message, ...rest);
+    };
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '첫 사진 추가하기' })).toBeEnabled();
+  await page.locator('#file-input').setInputFiles(paths);
+  await expect(page.locator('.status-ready')).toHaveCount(51, { timeout: 300000 });
+  await page.getByLabel('출력 포맷', { exact: true }).selectOption('webp');
+  await page.getByRole('button', { name: '51장 변환하기' }).click();
+  let reported = -1;
+  await expect.poll(async () => {
+    const done = await page.locator('.status-done').count();
+    if (done !== reported) {
+      console.log(`32MP WebP batch: ${done}/51 done, ${await page.locator('.status-error').count()} failed`);
+      reported = done;
+    }
+    return done;
+  }, { timeout: 1500000, intervals: [2000] }).toBe(51);
+  expect(await page.evaluate(() => new Set(window.__finalWorkers).size)).toBe(51);
+  await expect(page.locator('.status-error')).toHaveCount(0);
+  await expect(page.locator('.output-report')).toContainText('6960 × 4640');
+  await expect(page.locator('.output-report')).toContainText('품질 95');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: '1번 결과 저장' }).click();
+  const metadata = await sharp(await readFile(await (await download).path())).metadata();
+  expect(metadata.format).toBe('webp');
+  expect(metadata.width).toBe(6960);
+  expect(metadata.height).toBe(4640);
+  await page.reload();
+  await expect(page.locator('.status-done')).toHaveCount(51);
+});
 
 test('desktop: local Worker, privacy, exact-pixel proof, download, ZIP and reload recovery', async ({
   page,

@@ -565,6 +565,7 @@ export function createEngine(
                   input.height,
                   input.source.hasAlpha(),
                 );
+          handles.close();
           artifacts = [
             await verify(
               bytes,
@@ -579,7 +580,8 @@ export function createEngine(
           ];
         } else {
           let { output, count } = render(input, recipe, handles, preview);
-          if (!preview && recipe.purpose === 'size' && recipe.format !== 'png') {
+          if (!preview && (recipe.format === 'webp' ||
+            (recipe.purpose === 'size' && recipe.format !== 'png'))) {
             // Evaluate ICC/resize once rather than once per candidate quality.
             // Only final 8-bit pixels are retained, never the high-bit pipeline.
             const pixels = output.copyMemory();
@@ -622,17 +624,9 @@ export function createEngine(
                       bytes: await encodeAt(recipe.quality),
                       quality: recipe.format === 'png' ? null : recipe.quality,
                     };
-              artifacts.push(
-                await verify(
-                  encoded.bytes,
-                  recipe,
-                  input,
-                  image.width,
-                  image.height,
-                  encoded.quality,
-                  handles,
-                ),
-              );
+              // Defer full output decoding until every render/encoder handle is gone.
+              artifacts.push({ bytes: encoded.bytes, width: image.width,
+                height: image.height, quality: encoded.quality });
               if (region && i === Math.min(count - 1, region.slice || 0)) {
                 const width = Math.min(768, image.width),
                   height = Math.min(768, image.height);
@@ -664,6 +658,14 @@ export function createEngine(
                   top,
                 };
               }
+            }
+          }
+          if (!preview) {
+            handles.close();
+            for (let i = 0; i < artifacts.length; i++) {
+              const encoded = artifacts[i];
+              artifacts[i] = await verify(encoded.bytes, recipe, input,
+                encoded.width, encoded.height, encoded.quality, handles);
             }
           }
         }

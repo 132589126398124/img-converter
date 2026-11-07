@@ -40,16 +40,23 @@ function getWorker() {
       const slot = pending.get(data.id);
       if (!slot) return;
       pending.delete(data.id);
-      if (data.error) slot.reject(new Error(data.error));
-      else slot.resolve(data.result);
-      if (data.fatal) stop(new Error(data.error));
+      if (data.error) {
+        const error = new Error(data.error);
+        if (data.fatal) error.name = 'EngineResourceError';
+        if (data.fatal) stop(error);
+        slot.reject(error);
+      } else {
+        if (data.recycle) stop();
+        slot.resolve(data.result);
+      }
     };
-    worker.onerror = () =>
-      stop(
-        new Error(
+    worker.onerror = () => {
+      const error = new Error(
           '이미지 엔진이 종료되었습니다. 메모리가 부족할 수 있습니다. 더 작은 파일로 재시도하세요.',
-        ),
       );
+      error.name = 'EngineResourceError';
+      stop(error);
+    };
   }
   return worker;
 }

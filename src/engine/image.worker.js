@@ -1,6 +1,6 @@
 import { createEngine } from './core.js';
 
-let engine,
+let engine, operations = 0,
   serial = Promise.resolve();
 /** @param {import('./types').EngineRequest} request */
 async function execute({
@@ -44,14 +44,16 @@ async function execute({
             region,
           });
     if (region) result.artifacts = [];
-    self.postMessage({ id, result });
+    // WASM memory cannot shrink. Release the complete worker after a final job,
+    // and periodically during inspection, instead of retaining its high-water heap.
+    self.postMessage({ id, result, recycle: method === 'run' || ++operations >= 8 });
   } catch (error) {
     const message = String(error?.message || error);
-    const fatal = /out of memory|insufficient memory|memory access|aborted|allocation failed/i.test(message);
+    const fatal = /out of memory|insufficient memory|memory access|aborted|allocation failed|wbuffer_write|unable to encode/i.test(message);
     self.postMessage({
       id,
       error: fatal
-        ? `이미지 엔진의 메모리가 부족하거나 실행이 중단되었습니다. 엔진을 초기화했습니다. 완료된 결과는 유지됩니다. 재시도하거나 장축 길이를 줄여 주세요. (${message})`
+        ? `이미지 엔진의 메모리 또는 인코더 오류로 작업을 멈췄습니다. 완료된 결과는 유지됩니다. 새 엔진으로 재시도할 수 있습니다. (${message})`
         : message,
       fatal,
     });
